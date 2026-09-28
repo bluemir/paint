@@ -10,7 +10,7 @@ import (
 var openPalette = tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl}
 
 // openCommandPalette 는 ctrl+p 로 팔레트를 연다. 뜬 화면이 팔레트가 아니면 시험을 멈춘다.
-func openCommandPalette(t *testing.T, s *sketch) *viewCommand {
+func openCommandPalette(t *testing.T, s *testSketch) *viewCommand {
 	t.Helper()
 	palette, ok := send(s, openPalette).(*viewCommand)
 	if !ok {
@@ -66,20 +66,20 @@ func TestPaletteSwallowsKeys(t *testing.T) {
 	brush, figure := s.brush, s.figure
 	palette := openCommandPalette(t, s)
 	send(palette, tea.KeyPressMsg{Code: tea.KeyTab}, typed("x"))
-	if s.mode != modeBrush || s.brush != brush || s.figure != figure {
-		t.Errorf("모드 %s, 모양 %s, 붓 %+v 가 바뀌었다", s.mode, s.figure, s.brush)
+	if s.mode() != modeBrush || s.brush != brush || s.figure != figure {
+		t.Errorf("모드 %s, 모양 %s, 붓 %+v 가 바뀌었다", s.mode(), s.figure, s.brush)
 	}
 	if palette.query.Value() != "x" {
 		t.Errorf("검색어 = %q", palette.query.Value())
 	}
-	if next := send(palette, tea.KeyPressMsg{Code: tea.KeyEscape}); next != tea.Model(s) {
+	if next := send(palette, tea.KeyPressMsg{Code: tea.KeyEscape}); !onMode(next) {
 		t.Error("esc 가 팔레트를 안 닫았다")
 	}
 }
 
 func TestPaletteSaves(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mock.json")
-	s := newSketch(path, NewCanvas(10, 5))
+	s := newTestScreen(path, NewCanvas(10, 5))
 	s.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
 	s.Update(canvasClick(s, 0, 0, tea.MouseLeft))
 	var next tea.Model = openCommandPalette(t, s)
@@ -87,7 +87,7 @@ func TestPaletteSaves(t *testing.T) {
 		next = send(next, typed(string(r)))
 	}
 	next = send(next, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if s.dirty || next != tea.Model(s) {
+	if s.dirty || !onMode(next) {
 		t.Errorf("저장 뒤 수정됨 %v, 화면 %T", s.dirty, next)
 	}
 	if _, err := Load(path); err != nil {

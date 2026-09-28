@@ -15,7 +15,7 @@ import (
 var openGlyphs = typed("v")
 
 // openGlyphTable 은 v 키로 글자표를 연다. 뜬 화면이 글자표가 아니면 시험을 멈춘다.
-func openGlyphTable(t *testing.T, s *sketch) *viewGlyph {
+func openGlyphTable(t *testing.T, s *testSketch) *viewGlyph {
 	t.Helper()
 	table, ok := send(s, openGlyphs).(*viewGlyph)
 	if !ok {
@@ -34,7 +34,7 @@ func TestGlyphPopupPicksBlank(t *testing.T) {
 	if s.brush.Glyph != "　" {
 		t.Errorf("붓 = %q, 전각 빈칸이어야 한다", s.brush.Glyph)
 	}
-	if next != tea.Model(s) {
+	if !onMode(next) {
 		t.Error("고른 뒤에도 창이 떠 있다")
 	}
 }
@@ -66,6 +66,7 @@ func TestGlyphPopupOpensAtBrush(t *testing.T) {
 	if table.top == 0 || !slices.Contains(table.rows()[table.top].glyphs, "∞") {
 		t.Errorf("맨 위 줄 %d = %+v, ∞ 가 있는 줄이어야 한다", table.top, table.rows()[table.top])
 	}
+	send(s, escape)
 	s.brush.Glyph = "한"
 	if table := openGlyphTable(t, s); table.top != 0 {
 		t.Errorf("표에 없는 글자인데 맨 위 줄 = %d", table.top)
@@ -149,8 +150,8 @@ func TestEraseModeErasesWithLeftClick(t *testing.T) {
 	s := newTestSketch(10, 5)
 	s.Update(canvasClick(s, 1, 1, tea.MouseLeft))
 	s.setMode(modeErase)
-	if s.mode != modeErase {
-		t.Fatalf("모드 = %s", s.mode)
+	if s.mode() != modeErase {
+		t.Fatalf("모드 = %s", s.mode())
 	}
 	s.Update(canvasClick(s, 1, 1, tea.MouseLeft))
 	if s.canvas.At(1, 1) != blank {
@@ -161,7 +162,7 @@ func TestEraseModeErasesWithLeftClick(t *testing.T) {
 
 // 글자표 창은 터미널 높이의 60%, 폭의 80% 안이다. 폭은 칸 단위로 내림한다.
 func TestGlyphBoxSize(t *testing.T) {
-	s := newSketch("unused.json", NewCanvas(80, 40))
+	s := newTestScreen("unused.json", NewCanvas(80, 40))
 	s.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	box := openGlyphTable(t, s).box()
 	if got, want := lipgloss.Height(box), 30; got != want {
@@ -178,7 +179,7 @@ func TestGlyphBoxSize(t *testing.T) {
 func TestGlyphBoxSizeMatchesRender(t *testing.T) {
 	for _, size := range [][2]int{{200, 50}, {80, 24}, {40, 30}} {
 		for _, query := range []string{"", "삼각형", "없는말없는말"} {
-			s := newSketch("unused.json", NewCanvas(40, 20))
+			s := newTestScreen("unused.json", NewCanvas(40, 20))
 			s.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			table := openGlyphTable(t, s)
 			table.query = components.NewText(query)
@@ -193,7 +194,7 @@ func TestGlyphBoxSizeMatchesRender(t *testing.T) {
 
 // 좁은 터미널에서도 한 줄에 minGlyphColumns 자는 든다.
 func TestGlyphBoxKeepsMinColumns(t *testing.T) {
-	s := newSketch("unused.json", NewCanvas(40, 20))
+	s := newTestScreen("unused.json", NewCanvas(40, 20))
 	s.Update(tea.WindowSizeMsg{Width: 40, Height: 30})
 	if got, want := lipgloss.Width(openGlyphTable(t, s).box()), minGlyphColumns*glyphCellWidth+2; got != want {
 		t.Errorf("창 폭 = %d, %d 여야 한다", got, want)
@@ -228,7 +229,7 @@ func TestGlyphSearchFiltersAndPicks(t *testing.T) {
 		t.Fatalf("걸러진 줄 = %+v", rows)
 	}
 	next = send(table, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if s.brush.Glyph != rows[1].glyphs[0] || next != tea.Model(s) {
+	if s.brush.Glyph != rows[1].glyphs[0] || !onMode(next) {
 		t.Errorf("붓 = %q, %q 여야 한다", s.brush.Glyph, rows[1].glyphs[0])
 	}
 }
@@ -345,7 +346,7 @@ func TestGlyphPopupClosesOnOutsideClick(t *testing.T) {
 	if next := send(table, tea.MouseClickMsg{X: originX, Y: originY, Button: tea.MouseLeft}); next != tea.Model(table) {
 		t.Fatal("테두리를 눌렀는데 창이 닫혔다")
 	}
-	if next := send(table, tea.MouseClickMsg{X: originX - 1, Y: originY + 3, Button: tea.MouseLeft}); next != tea.Model(s) || s.dirty {
+	if next := send(table, tea.MouseClickMsg{X: originX - 1, Y: originY + 3, Button: tea.MouseLeft}); !onMode(next) || s.dirty {
 		t.Errorf("화면 %T, 칠함 %v", next, s.dirty)
 	}
 }

@@ -124,8 +124,8 @@ func TestTabCyclesFigures(t *testing.T) {
 	s.setMode(modePaint)
 	for _, want := range []figure{figureLine, figureBox, figureFill, figureDot} {
 		s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-		if s.figure != want || s.mode != modePaint {
-			t.Errorf("모양 %s, 도구 %s", s.figure, s.mode)
+		if s.figure != want || s.mode() != modePaint {
+			t.Errorf("모양 %s, 도구 %s", s.figure, s.mode())
 		}
 	}
 }

@@ -15,12 +15,12 @@ import (
 	"github.com/bluemir/paint/internal/tui/components"
 )
 
-// command 는 팔레트에 오르는 명령 하나다. run 은 판을 받아 다음 화면을 돌려준다. 대개 판 자신이라
-// 팔레트가 닫히고, 창을 여는 명령은 그 창이다.
+// command 는 팔레트에 오르는 명령 하나다. run 은 판과 팔레트 밑의 모드 화면(from)을 받아 다음 화면을
+// 돌려준다. 대개 from 이라 팔레트가 닫히고, 도구를 바꾸면 새 모드 화면이, 창을 여는 명령은 그 창이다.
 type command struct {
 	name string // 검색어가 맞춰 보는 이름
 	desc string // 목록 오른쪽에 붙는 설명. 검색어가 이것도 훑는다
-	run  func(s *sketch) (tea.Model, tea.Cmd)
+	run  func(s *sketch, from tea.Model) (tea.Model, tea.Cmd)
 }
 
 // commands 는 팔레트의 명령표다. 목록 차례가 곧 화면에 뜨는 차례다. 도구와 모양은 제 목록(modes,
@@ -38,10 +38,7 @@ var commands = slices.Concat(
 func modeCommands() []command {
 	out := []command{}
 	for _, m := range modes {
-		out = append(out, command{name: m.command(), desc: m.desc(), run: func(s *sketch) (tea.Model, tea.Cmd) {
-			s.setMode(m)
-			return s, nil
-		}})
+		out = append(out, command{name: m.command, desc: m.desc, run: m.open})
 	}
 	return out
 }
@@ -49,33 +46,35 @@ func modeCommands() []command {
 func figureCommands() []command {
 	out := []command{}
 	for _, f := range figures {
-		out = append(out, command{name: f.command(), desc: "모양: " + f.String(), run: func(s *sketch) (tea.Model, tea.Cmd) {
-			s.setFigure(f)
-			return s, nil
+		out = append(out, command{name: f.command(), desc: "모양: " + f.String(), run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
+			s.figure = f
+			return from, nil
 		}})
 	}
 	return out
 }
 
 var editCommands = []command{
-	{name: "undo", desc: "되돌린다", run: func(s *sketch) (tea.Model, tea.Cmd) {
+	{name: "undo", desc: "되돌린다", run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
 		s.undo()
-		return s, nil
+		return from, nil
 	}},
-	{name: "redo", desc: "다시 한다", run: func(s *sketch) (tea.Model, tea.Cmd) {
+	{name: "redo", desc: "다시 한다", run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
 		s.redo()
-		return s, nil
+		return from, nil
 	}},
-	{name: "save", desc: "파일에 저장한다", run: func(s *sketch) (tea.Model, tea.Cmd) {
+	{name: "save", desc: "파일에 저장한다", run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
 		s.save()
-		return s, nil
+		return from, nil
 	}},
 }
 
 // viewCommand 는 팔레트가 떠 있는 화면이다. 떠 있는 동안 키는 전부 검색어로 간다. Tab 이나 글자 키가
 // 판에 닿으면 안 된다. 검색어와 짚은 줄은 이 화면이 갖는다. 열 때마다 새로 세우므로 비어 있다.
 type viewCommand struct {
-	under *sketch
+	*sketch
+	// under 는 팔레트 밑의 모드 화면이다. 닫으면 그리로 돌아가고, 명령은 그것을 from 으로 받는다.
+	under tea.Model
 
 	query  components.Text
 	cursor int
@@ -100,7 +99,7 @@ func (v *viewCommand) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return v, nil
 }
 
-func (v *viewCommand) View() tea.View { return v.under.frame(v.box()) }
+func (v *viewCommand) View() tea.View { return v.overlay(v.under, v.box()) }
 
 // matches 는 검색어가 걸러 남긴 명령들이다. 검색어가 비었으면 전부다. 이름이 영어라 설명문도
 // 훑어야 한글로 찾힌다.
@@ -121,7 +120,7 @@ func (v *viewCommand) matches() []command {
 func (v *viewCommand) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// ctrl+p 는 팔레트를 새로 연다. 판이 받으므로 검색어가 비워진다.
 	if slices.Contains(sketchKeys, msg.String()) {
-		return v.under.keyOver(v, msg)
+		return v.keyOver(v, v.under, msg)
 	}
 	found := v.matches()
 	switch msg.String() {
@@ -129,7 +128,7 @@ func (v *viewCommand) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return v.under, nil
 	case "enter":
 		if v.cursor < len(found) {
-			return found[v.cursor].run(v.under)
+			return found[v.cursor].run(v.sketch, v.under)
 		}
 		return v, nil
 	case "up", "down":
@@ -154,10 +153,10 @@ func (v *viewCommand) click(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if mouse.Button != tea.MouseLeft {
 		return v, nil
 	}
-	_, y := v.under.insidePopup(v.box(), mouse)
+	_, y := v.insidePopup(v.box(), mouse)
 	found := v.matches()
 	if index := y - 1; index >= 0 && index < len(found) {
-		return found[index].run(v.under)
+		return found[index].run(v.sketch, v.under)
 	}
 	return v, nil
 }

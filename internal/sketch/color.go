@@ -20,10 +20,11 @@ const (
 	noColorButton = "[없음]"
 )
 
-// viewColor 는 색표가 떠 있는 화면이다. 창은 여러 번 골라도 떠 있다(전경과 배경을 잇달아 고르므로).
-// 창 바깥을 누르거나 Esc 를 누르면 닫힌다.
+// viewColor 는 색표가 떠 있는 화면이다. under 는 창 밑의 모드 화면이고 닫으면 그리로 돌아간다. 창은 여러
+// 번 골라도 떠 있다(전경과 배경을 잇달아 고르므로). 창 바깥을 누르거나 Esc 를 누르면 닫힌다.
 type viewColor struct {
-	under *sketch
+	*sketch
+	under tea.Model
 }
 
 func (v *viewColor) Init() tea.Cmd { return nil }
@@ -34,7 +35,7 @@ func (v *viewColor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.under.Update(msg)
 	case tea.KeyPressMsg:
 		if slices.Contains(sketchKeys, msg.String()) {
-			return v.under.keyOver(v, msg)
+			return v.keyOver(v, v.under, msg)
 		}
 		if msg.String() == "esc" {
 			return v.under, nil
@@ -45,7 +46,7 @@ func (v *viewColor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return v, nil
 }
 
-func (v *viewColor) View() tea.View { return v.under.frame(colorBox()) }
+func (v *viewColor) View() tea.View { return v.overlay(v.under, colorBox()) }
 
 func colorBox() string {
 	lines := []string{colorTitle}
@@ -65,10 +66,10 @@ func colorBox() string {
 // 닿지 않는다.
 func (v *viewColor) pick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	box := colorBox()
-	if v.under.outsidePopup(box, mouse) {
+	if v.outsidePopup(box, mouse) {
 		return v.under, nil
 	}
-	x, y := v.under.insidePopup(box, mouse)
+	x, y := v.insidePopup(box, mouse)
 	var color Color
 	switch {
 	case y >= 1 && y <= colorRows && x >= 0 && x < colorColumns*swatchWidth:
@@ -80,9 +81,9 @@ func (v *viewColor) pick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	}
 	switch mouse.Button {
 	case tea.MouseLeft:
-		v.under.brush.Fg = color
+		v.brush.Fg = color
 	case tea.MouseRight:
-		v.under.brush.Bg = color
+		v.brush.Bg = color
 	}
 	return v, nil
 }

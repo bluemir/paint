@@ -218,7 +218,9 @@ func glyphMatches(title, glyph, query string) bool {
 // 굴린 곳 · 검색어 · 마우스가 올라간 칸은 이 화면이 갖는다. 열 때마다 새로 세우므로 검색어는 비어 있고,
 // 굴린 곳은 지금 붓 글자가 있는 줄이다(newViewGlyph).
 type viewGlyph struct {
-	under *sketch
+	*sketch
+	// under 는 창 밑의 모드 화면이다. 닫으면 그리로 돌아간다.
+	under tea.Model
 
 	// top 은 걸러진 목록(rows)을 몇 줄 내려 보는지다.
 	top int
@@ -232,11 +234,11 @@ type viewGlyph struct {
 
 // newViewGlyph 는 글자표를 연다. 지금 붓 글자가 있는 줄을 맨 위에 두고 연다. 방금 쓰던 글자 근처에서
 // 다음 글자를 고르는 일이 잦다. 표에 없는 글자(키로 친 한글 등)면 맨 위다.
-func newViewGlyph(under *sketch) *viewGlyph {
-	v := &viewGlyph{under: under, query: components.NewText(""), hoverRow: -1, hoverColumn: -1}
+func newViewGlyph(s *sketch, under tea.Model) *viewGlyph {
+	v := &viewGlyph{sketch: s, under: under, query: components.NewText(""), hoverRow: -1, hoverColumn: -1}
 	v.query.Blur() // 검색 줄을 누를 때까지는 글자 키가 붓이다
 	for i, row := range v.rows() {
-		if slices.Contains(row.glyphs, under.brush.Glyph) {
+		if slices.Contains(row.glyphs, s.brush.Glyph) {
 			v.top = i
 			break
 		}
@@ -275,7 +277,7 @@ func (v *viewGlyph) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return v, nil
 }
 
-func (v *viewGlyph) View() tea.View { return v.under.frame(v.box()) }
+func (v *viewGlyph) View() tea.View { return v.overlay(v.under, v.box()) }
 
 // key 는 글자표의 키다.
 //
@@ -286,7 +288,7 @@ func (v *viewGlyph) View() tea.View { return v.under.frame(v.box()) }
 //   - 검색 중이 아니면 글자 키가 그 글자를 붓으로 삼는다. 표에 없는 글자(한글, 영문 등)는 이 길로 고른다.
 func (v *viewGlyph) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if slices.Contains(sketchKeys, msg.String()) {
-		return v.under.keyOver(v, msg)
+		return v.keyOver(v, v.under, msg)
 	}
 	switch msg.String() {
 	case "tab":
@@ -318,7 +320,7 @@ func (v *viewGlyph) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return v.searchKey(msg)
 	}
 	if glyph := typedGlyph(msg); glyph != "" {
-		v.under.brush.Glyph = glyph
+		v.brush.Glyph = glyph
 		return v.under, nil
 	}
 	return v, nil
@@ -329,7 +331,7 @@ func (v *viewGlyph) searchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "enter" {
 		for _, row := range v.rows() {
 			if len(row.glyphs) > 0 {
-				v.under.brush.Glyph = row.glyphs[0]
+				v.brush.Glyph = row.glyphs[0]
 				return v.under, nil
 			}
 		}
@@ -380,13 +382,13 @@ func (v *viewGlyph) rows() []glyphRow {
 // rowsShown 은 글자표가 한 번에 보이는 줄 수다. 창 전체(테두리 둘과 안내 · 검색 두 줄 포함)가 터미널
 // 높이의 60% 다. 글자가 오천 자를 넘어 어차피 굴려야 하므로, 화면을 다 덮어 판을 가리는 것보다 낫다.
 // 띠까지 친 터미널 높이로 재지만 60% 라 띠를 가리지는 않는다.
-func (v *viewGlyph) rowsShown() int { return max(v.under.height*6/10-4, 1) }
+func (v *viewGlyph) rowsShown() int { return max(v.height*6/10-4, 1) }
 
 // columns 는 글자표 한 줄의 글자 수다. 창 전체(테두리 포함)가 터미널 폭의 80% 를 넘지 않게 칸
 // 폭(glyphCellWidth) 단위로 내림한다. 좁은 터미널에서도 minGlyphColumns 아래로는 안 줄인다. 그보다
 // 좁으면 창이 80% 를 넘는다. 안내 줄(glyphTitle)이 그 폭에 맞춰져 있다.
 func (v *viewGlyph) columns() int {
-	return max((v.under.width*8/10-2)/glyphCellWidth, minGlyphColumns)
+	return max((v.width*8/10-2)/glyphCellWidth, minGlyphColumns)
 }
 
 func (v *viewGlyph) scrollBy(by int) {
@@ -462,7 +464,7 @@ var glyphHoverStyle = lipgloss.NewStyle().Background(lipgloss.ANSIColor(244))
 func (v *viewGlyph) at(mouse tea.Mouse) (row, column int, ok bool) {
 	v.scrollBy(0) // box 가 그리기 전에 하는 것과 같다. 줄이 줄었으면 내려 본 곳을 당긴다
 	rows := v.rows()
-	originX, originY := v.under.centerOrigin(v.boxSize())
+	originX, originY := v.centerOrigin(v.boxSize())
 	x, y := mouse.X-originX-1, mouse.Y-originY-1
 	row, column = v.top+y-glyphListTop, x/glyphCellWidth
 	if y < glyphListTop || y >= glyphListTop+v.rowsShown() || x < 0 || row >= len(rows) || column >= len(rows[row].glyphs) {
@@ -486,14 +488,14 @@ const glyphListTop = 2
 // 누르면 닫힌다. 그 누름은 판에 닿지 않는다. 색표와 같다.
 func (v *viewGlyph) pick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	box := v.box()
-	if v.under.outsidePopup(box, mouse) {
+	if v.outsidePopup(box, mouse) {
 		return v.under, nil
 	}
-	if _, y := v.under.insidePopup(box, mouse); y == glyphListTop-1 {
+	if _, y := v.insidePopup(box, mouse); y == glyphListTop-1 {
 		return v, v.startSearch()
 	}
 	if row, column, ok := v.at(mouse); ok {
-		v.under.brush.Glyph = v.rows()[row].glyphs[column]
+		v.brush.Glyph = v.rows()[row].glyphs[column]
 		return v.under, nil
 	}
 	return v, nil

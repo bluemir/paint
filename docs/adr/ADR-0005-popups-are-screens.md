@@ -1,6 +1,6 @@
 # ADR-0005: 창은 필드가 아니라 화면이다
 
-- 상태: 채택 (Accepted)
+- 상태: 채택 (Accepted). 창이 든 under 는 ADR-0006 에서 *sketch 가 아니라 연 모드 화면(tea.Model)이 되었다
 - 날짜: 2026-09-29
 - 참고: redzone-sector-0 ADR-0113(입력을 가진 화면이 상태도 가진다), ADR-0114(입력 모드는 화면이다)
 

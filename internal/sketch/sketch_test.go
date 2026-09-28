@@ -9,11 +9,96 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// testSketch 는 시험용 그림판이다. 판(sketch)을 품고 지금 떠 있는 화면(screen)을 든다. Update 는 그
+// 화면에 보내고 돌려받은 화면으로 바꾼다. 프로그램(bubbletea)이 하는 것과 같다.
+type testSketch struct {
+	*sketch
+	screen tea.Model
+}
+
+// newTestScreen 은 판 canvas 를 브러시 모드로 연다. 화면 크기는 아직 없다.
+func newTestScreen(path string, canvas *Canvas) *testSketch {
+	s := newSketch(path, canvas)
+	return &testSketch{sketch: s, screen: &viewBrush{sketch: s}}
+}
+
 // newTestSketch 는 width x height 판이 눈금 · 줄 번호 · 띠를 두르고 꼭 맞게 보이는 화면이다.
-func newTestSketch(width, height int) *sketch {
-	s := newSketch("unused.json", NewCanvas(width, height))
+func newTestSketch(width, height int) *testSketch {
+	s := newTestScreen("unused.json", NewCanvas(width, height))
 	s.Update(tea.WindowSizeMsg{Width: width + s.originX(), Height: height + 2})
 	return s
+}
+
+func (s *testSketch) Init() tea.Cmd { return nil }
+
+func (s *testSketch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := s.screen.Update(msg)
+	s.screen = next
+	return next, cmd
+}
+
+func (s *testSketch) View() tea.View { return s.screen.View() }
+
+// 도구 이름이다. 시험이 도구를 이름으로 부른다.
+const (
+	modeBrush = brushModeName
+	modeText  = textModeName
+	modePaint = paintModeName
+	modeErase = eraseModeName
+)
+
+// mode 는 지금 모드 화면의 도구 이름이다. 창이 떠 있으면 창 밑의 모드다.
+func (s *testSketch) mode() string { return modeOf(s.screen) }
+
+func modeOf(screen tea.Model) string {
+	switch screen := screen.(type) {
+	case *viewBrush:
+		return brushModeName
+	case *viewPaint:
+		return paintModeName
+	case *viewErase:
+		return eraseModeName
+	case *viewText:
+		return textModeName
+	case *viewColor:
+		return modeOf(screen.under)
+	case *viewGlyph:
+		return modeOf(screen.under)
+	case *viewCommand:
+		return modeOf(screen.under)
+	}
+	return typeName(screen)
+}
+
+var escape = tea.KeyPressMsg{Code: tea.KeyEscape}
+
+// setMode 는 이름이 name 인 도구를 든다. 도구 키를 누른 것과 같다.
+func (s *testSketch) setMode(name string) {
+	for _, m := range modes {
+		if m.name == name {
+			s.screen, _ = m.open(s.sketch, s.screen)
+			return
+		}
+	}
+	panic("없는 도구: " + name)
+}
+
+// setFigure 는 모양을 고른다. 도구 줄에서 누른 것과 같다.
+func (s *testSketch) setFigure(f figure) { s.figure = f }
+
+// stripLine 은 지금 화면의 띠다.
+func (s *testSketch) stripLine() string {
+	lines := strings.Split(s.View().Content, "\n")
+	return lines[len(lines)-1]
+}
+
+// onMode 는 창이 닫히고 모드 화면이 떠 있는지다.
+func onMode(model tea.Model) bool {
+	switch model.(type) {
+	case *viewBrush, *viewPaint, *viewErase, *viewText:
+		return true
+	}
+	return false
 }
 
 // typeName 은 화면의 타입 이름이다. 지금 뜬 창이 무엇인지 적는 데 쓴다.
@@ -28,11 +113,11 @@ func send(model tea.Model, msgs ...tea.Msg) tea.Model {
 }
 
 // canvasClick 과 canvasDrag 는 판 칸 (x, y) 를 짚는 마우스다. 굴린 만큼과 눈금 여백만큼 화면 칸을 옮긴다.
-func canvasClick(s *sketch, x, y int, button tea.MouseButton) tea.MouseClickMsg {
+func canvasClick(s *testSketch, x, y int, button tea.MouseButton) tea.MouseClickMsg {
 	return tea.MouseClickMsg{X: x - s.left + s.originX(), Y: y - s.top + 1, Button: button}
 }
 
-func canvasDrag(s *sketch, x, y int, button tea.MouseButton) tea.MouseMotionMsg {
+func canvasDrag(s *testSketch, x, y int, button tea.MouseButton) tea.MouseMotionMsg {
 	return tea.MouseMotionMsg{X: x - s.left + s.originX(), Y: y - s.top + 1, Button: button}
 }
 
@@ -63,7 +148,7 @@ func TestBrushAndEraseWithMouse(t *testing.T) {
 
 // 판이 화면보다 크면 굴린 만큼 밀린 칸에 칠한다.
 func TestBrushFollowsScroll(t *testing.T) {
-	s := newSketch("unused.json", NewCanvas(20, 20))
+	s := newTestScreen("unused.json", NewCanvas(20, 20))
 	s.Update(tea.WindowSizeMsg{Width: toolbarWidth + 10, Height: 6})
 	s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s.Update(tea.KeyPressMsg{Code: tea.KeyRight})
@@ -140,7 +225,7 @@ func TestQuitAsksAgainWhenDirty(t *testing.T) {
 // 화면이 판보다 작든 크든, 창이 떴든 글자 모드든 띠까지 화면 높이에 맞는다.
 func TestViewFitsScreen(t *testing.T) {
 	for _, size := range [][2]int{{40, 10}, {120, 40}} {
-		s := newSketch("unused.json", NewCanvas(80, 24))
+		s := newTestScreen("unused.json", NewCanvas(80, 24))
 		s.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		for _, key := range []tea.KeyPressMsg{{Code: tea.KeyTab}, {Code: tea.KeyEscape}, typed("c"), {Code: tea.KeyEscape}, typed("v")} {
 			s.Update(key)
@@ -155,10 +240,10 @@ func TestViewFitsScreen(t *testing.T) {
 // 왼쪽 상태가 길어지고 짧아져도 키 안내는 오른쪽 끝 같은 곳에 있다.
 func TestStripHintsStayRight(t *testing.T) {
 	s := newTestSketch(100, 5)
-	short := ansi.Strip(s.strip())
+	short := ansi.Strip(s.stripLine())
 	s.Update(canvasDrag(s, 42, 3, 0))
 	s.message = "저장했다: unused.json"
-	long := ansi.Strip(s.strip())
+	long := ansi.Strip(s.stripLine())
 	for _, line := range []string{short, long} {
 		if ansi.StringWidth(line) != s.width || !strings.HasSuffix(line, stripHints) {
 			t.Errorf("띠 = %q (폭 %d)", line, ansi.StringWidth(line))
@@ -168,7 +253,7 @@ func TestStripHintsStayRight(t *testing.T) {
 
 // 판이 화면보다 작으면 판 밖이 점으로 차고 판 안은 비어 있다. 눈금은 0 부터, 줄 번호는 굴린 만큼이다.
 func TestBoardShowsCanvasEdge(t *testing.T) {
-	s := newSketch("unused.json", NewCanvas(12, 30))
+	s := newTestScreen("unused.json", NewCanvas(12, 30))
 	s.Update(tea.WindowSizeMsg{Width: 30, Height: 12})
 	lines := strings.Split(ansi.Strip(s.board(s.canvas)), "\n")
 	if len(lines) != s.viewHeight() {
@@ -191,7 +276,7 @@ func TestBoardShowsCanvasEdge(t *testing.T) {
 
 // 판이 화면보다 짧으면 판 아래 줄은 전부 점이다.
 func TestBoardFillsBelowCanvas(t *testing.T) {
-	s := newSketch("unused.json", NewCanvas(5, 2))
+	s := newTestScreen("unused.json", NewCanvas(5, 2))
 	s.Update(tea.WindowSizeMsg{Width: 20, Height: 6})
 	lines := strings.Split(ansi.Strip(s.board(s.canvas)), "\n")
 	if last := lines[len(lines)-1]; strings.TrimLeft(last, " ") != strings.Repeat(offCanvasGlyph, 20-toolbarWidth-s.gutter()) {
@@ -231,11 +316,11 @@ func TestPaintModeChangesOnlyColor(t *testing.T) {
 func TestToolbarKeepsWidth(t *testing.T) {
 	s := newTestSketch(10, 20)
 	for row := range s.viewHeight() {
-		line := ansi.Strip(s.toolbarLine(row))
+		line := ansi.Strip(s.toolbarLine(row, s.mode()))
 		if got := ansi.StringWidth(line); got != toolbarWidth {
 			t.Errorf("%d 번째 줄 폭 = %d", row, got)
 		}
-		if row < len(tools) && tools[row].label != nil && !strings.Contains(line, tools[row].label(s)+" ") {
+		if row < len(tools) && tools[row].label != nil && !strings.Contains(line, tools[row].label(s.sketch)+" ") {
 			t.Errorf("%d 번째 줄 %q 에 이름 뒤 빈칸이 없다", row, line)
 		}
 	}
@@ -254,7 +339,7 @@ func TestTextModePlacesTerminalCursor(t *testing.T) {
 		t.Errorf("커서 = %+v", cursor)
 	}
 	// 글자 모드에서는 c 가 글자라 색표를 바로 연다. 띠의 색을 눌러 여는 것과 같다.
-	colors, _ := s.openColors()
+	colors, _ := s.openColors(s.screen)
 	if colors.View().Cursor != nil {
 		t.Error("색표가 떴는데 커서가 보인다")
 	}
@@ -283,14 +368,14 @@ func TestBrushChangesOnlyInGlyphPopup(t *testing.T) {
 	if s.brush.Glyph != before {
 		t.Errorf("브러시 모드 글자 키가 붓을 바꿨다: %q", s.brush.Glyph)
 	}
-	if next := send(s, typed("v"), typed("한")); s.brush.Glyph != "한" || next != tea.Model(s) {
+	if next := send(s, typed("v"), typed("한")); s.brush.Glyph != "한" || !onMode(next) {
 		t.Errorf("붓 %q, 화면 %T", s.brush.Glyph, next)
 	}
 }
 
 // 한 글자 키가 도구를 든다. 도구 줄에 적힌 키와 같다.
 func TestToolKeys(t *testing.T) {
-	for key, want := range map[string]mode{"b": modeBrush, "t": modeText, "r": modePaint, "e": modeErase} {
+	for key, want := range map[string]string{"b": modeBrush, "t": modeText, "r": modePaint, "e": modeErase} {
 		s := newTestSketch(10, 5)
 		start := modeErase // 키가 고르는 도구와 다른 곳에서 시작한다
 		if key == "e" {
@@ -298,8 +383,8 @@ func TestToolKeys(t *testing.T) {
 		}
 		s.setMode(start)
 		s.Update(typed(key))
-		if s.mode != want {
-			t.Errorf("%s: 모드 = %s, %s 여야 한다", key, s.mode, want)
+		if s.mode() != want {
+			t.Errorf("%s: 모드 = %s, %s 여야 한다", key, s.mode(), want)
 		}
 	}
 	for key, want := range map[string]string{"c": "*sketch.viewColor", "v": "*sketch.viewGlyph"} {
@@ -310,7 +395,7 @@ func TestToolKeys(t *testing.T) {
 }
 
 func TestWASDScrolls(t *testing.T) {
-	s := newSketch("unused.json", NewCanvas(40, 40))
+	s := newTestScreen("unused.json", NewCanvas(40, 40))
 	s.Update(tea.WindowSizeMsg{Width: toolbarWidth + 13, Height: 12})
 	s.Update(typed("s"))
 	s.Update(typed("d"))
@@ -331,12 +416,12 @@ func TestTextModeTypesToolKeysAndEscReturns(t *testing.T) {
 	s.Update(typed("t"))
 	s.Update(canvasClick(s, 0, 0, tea.MouseLeft))
 	s.Update(typed("q"))
-	if s.mode != modeText || s.canvas.At(0, 0).Glyph != "q" {
-		t.Errorf("모드 %s, 칸 %q", s.mode, s.canvas.At(0, 0).Glyph)
+	if s.mode() != modeText || s.canvas.At(0, 0).Glyph != "q" {
+		t.Errorf("모드 %s, 칸 %q", s.mode(), s.canvas.At(0, 0).Glyph)
 	}
 	s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if s.mode != modePaint {
-		t.Errorf("Esc 뒤 모드 = %s, 칠하기로 돌아가야 한다", s.mode)
+	if s.mode() != modePaint {
+		t.Errorf("Esc 뒤 모드 = %s, 칠하기로 돌아가야 한다", s.mode())
 	}
 }
 
@@ -348,15 +433,15 @@ func TestIMEWarningOnStrip(t *testing.T) {
 	s.Update(typed("t"))
 	s.Update(typed("한"))
 	s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if strings.Contains(ansi.Strip(s.strip()), warning) {
+	if strings.Contains(ansi.Strip(s.stripLine()), warning) {
 		t.Error("글자 모드에서 친 한글에 안내가 떴다")
 	}
 	s.Update(typed("ㅠ"))
-	if !strings.HasPrefix(ansi.Strip(s.strip()), warning) {
-		t.Errorf("띠 = %q", ansi.Strip(s.strip()))
+	if !strings.HasPrefix(ansi.Strip(s.stripLine()), warning) {
+		t.Errorf("띠 = %q", ansi.Strip(s.stripLine()))
 	}
 	s.Update(typed("b"))
-	if strings.Contains(ansi.Strip(s.strip()), warning) {
+	if strings.Contains(ansi.Strip(s.stripLine()), warning) {
 		t.Error("입력기를 끈 뒤에도 안내가 남았다")
 	}
 }
@@ -369,7 +454,7 @@ func TestColorPopupClosesOnOutsideClick(t *testing.T) {
 	if next := send(popup, tea.MouseClickMsg{X: originX, Y: originY, Button: tea.MouseLeft}); next != popup { // 테두리 모서리
 		t.Fatal("테두리를 눌렀는데 창이 닫혔다")
 	}
-	if next := send(popup, tea.MouseClickMsg{X: originX - 1, Y: originY + 3, Button: tea.MouseLeft}); next != tea.Model(s) {
+	if next := send(popup, tea.MouseClickMsg{X: originX - 1, Y: originY + 3, Button: tea.MouseLeft}); !onMode(next) {
 		t.Error("바깥을 눌렀는데 창이 떠 있다")
 	}
 	if s.dirty {
@@ -391,26 +476,26 @@ func TestQPicksHoveredCell(t *testing.T) {
 	if s.brush != (Cell{Glyph: "한", Fg: 40, Bg: 17}) {
 		t.Errorf("붓 = %+v", s.brush)
 	}
-	if s.mode != modePaint {
-		t.Errorf("모드 = %s, 그대로여야 한다", s.mode)
+	if s.mode() != modePaint {
+		t.Errorf("모드 = %s, 그대로여야 한다", s.mode())
 	}
 }
 
 // 띠의 전경 · 배경을 누르면 색표가, 붓을 누르면 글자표가 뜬다. 다른 토막은 아무것도 안 연다.
 func TestStripColorOpensColorPopup(t *testing.T) {
 	s := newTestSketch(80, 5)
-	line := ansi.Strip(s.strip())
+	line := ansi.Strip(s.stripLine())
 	for _, label := range []string{"전경", "배경"} {
 		x := ansi.StringWidth(line[:strings.Index(line, label)]) + 1
-		if next := send(s, tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft}); typeName(next) != "*sketch.viewColor" {
+		if next := send(s, escape, tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft}); typeName(next) != "*sketch.viewColor" {
 			t.Errorf("%s 을 눌렀는데 화면 = %T", label, next)
 		}
 	}
-	if next := send(s, tea.MouseClickMsg{X: 0, Y: s.height - 1, Button: tea.MouseLeft}); typeName(next) != "*sketch.viewGlyph" {
+	if next := send(s, escape, tea.MouseClickMsg{X: 0, Y: s.height - 1, Button: tea.MouseLeft}); typeName(next) != "*sketch.viewGlyph" {
 		t.Errorf("붓 토막을 눌렀는데 화면 = %T", next)
 	}
-	x := ansi.StringWidth(line[:strings.Index(line, s.mode.String())]) + 1
-	if next := send(s, tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft}); next != tea.Model(s) {
+	x := ansi.StringWidth(line[:strings.Index(line, s.mode())]) + 1
+	if next := send(s, escape, tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft}); !onMode(next) {
 		t.Errorf("모드 토막을 눌렀는데 화면 = %T", next)
 	}
 }

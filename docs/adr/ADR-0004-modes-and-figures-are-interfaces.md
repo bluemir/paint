@@ -1,6 +1,6 @@
 # ADR-0004: 도구와 모양을 interface 로 둔다
 
-- 상태: 채택 (Accepted)
+- 상태: 일부 대체 (Superseded in part). 도구 부분과 모양의 press · move · hint 는 ADR-0006 이 대체한다. 모양의 interface(이름 · points)와 목록 한 곳(§4)은 남는다
 - 날짜: 2026-09-29
 
 ## 배경 (Context)

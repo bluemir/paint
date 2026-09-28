@@ -3,14 +3,17 @@
 // 텍스트 목업으로는 터미널 색을 입힐 수 없어서 있다. 마우스로 글자와 256색을 칠해 파일로 남기고,
 // 그 파일을 다시 열어 고친다. (ADR-0001)
 //
-// 도구(mode.go)는 넷이고 키로 고르며, Tab 은 모양(shape.go)을 돈다. 브러시에서는 좌클릭이 붓을 찍고 우클릭이 지운다. 글자에서는
-// 클릭으로 커서를 놓고 치는 대로 적힌다. 칠하기에서는 글자를 두고 색만 붓 색으로 바꾼다. 지우기에서는
-// 좌클릭도 지운다. 붓 글자는 글자표(v)에서 고른다. 색표(c)와 글자표는 판 위에 뜨는 창이고, 명령
-// 팔레트(ctrl+p)와 도구 줄로도 열린다. 도구 키는 toolKey 에 있다.
+// 도구(mode.go)는 넷이고 키로 고르며, Tab 은 모양(shape.go)을 돈다. 브러시에서는 좌클릭이 붓을 찍고
+// 우클릭이 지운다. 글자에서는 클릭으로 커서를 놓고 치는 대로 적힌다. 칠하기에서는 글자를 두고 색만 붓
+// 색으로 바꾼다. 지우기에서는 좌클릭도 지운다. 붓 글자는 글자표(v)에서 고른다. 색표(c)와 글자표는 판 위에
+// 뜨는 창이고, 명령 팔레트(ctrl+p)와 도구 줄로도 열린다. 도구 키는 toolKey 에 있다.
 //
-// 창은 sketch 의 필드가 아니라 화면이다. 창마다 제 모델(viewColor · viewGlyph · viewCommand)이 있고 밑에
-// 깔린 판(under)을 들고 떠 있다. 떠 있는 동안 키와 마우스를 창이 받고, 닫을 때 under 를 돌려준다.
-// bubbletea 는 Update 가 돌려준 모델로 화면을 바꾼다. (ADR-0005)
+// sketch 는 판과 붓 같은 공유 상태이고 화면이 아니다. 화면은 모드마다 하나(viewBrush · viewText ·
+// viewPaint · viewErase)와 창마다 하나(viewColor · viewGlyph · viewCommand)이고, 모두 sketch 를 품는다. 지금 어느 모드인지, 무엇이 떠
+// 있는지는 필드가 아니라 떠 있는 화면이다. bubbletea 는 Update 가 돌려준 모델로 화면을 바꾼다.
+// (ADR-0005, ADR-0006)
+//
+// 여기 있는 것은 화면들이 함께 쓰는 판의 일이다: 크기, 좌표, 굴리기, 도구 키, ctrl 키, 그리기.
 
 package sketch
 
@@ -30,7 +33,7 @@ import (
 )
 
 func Run(ctx context.Context, path string, canvas *Canvas) error {
-	_, err := tea.NewProgram(newSketch(path, canvas), tea.WithContext(ctx)).Run()
+	_, err := tea.NewProgram(&viewBrush{sketch: newSketch(path, canvas)}, tea.WithContext(ctx)).Run()
 	return errors.WithStack(err)
 }
 
@@ -41,18 +44,15 @@ type sketch struct {
 	width, height int // 터미널 크기. 맨 아래 한 줄은 띠다.
 	left, top     int // 판의 어디부터 보이는지
 
-	mode    mode
-	figure  figure
-	history history
-
-	// dragging 은 직선 · 테두리 · 채움에서 끌고 있는 모양이다. 끌고 있지 않으면 nil 이다. (shape.go)
+	// figure 는 지금 모양이다. 도구를 바꿔도 남는다. 그리는 도구가 모두 쓴다(shape.go).
+	figure figure
+	// dragging 은 직선 · 테두리 · 채움에서 끌고 있는 모양이다. 끌고 있지 않으면 nil 이다. 도구나 모양을
+	// 바꾸면 버린다. 바뀐 뒤 버튼을 떼면 무엇을 그릴지 모른다.
 	dragging *drag
+	history  history
+	brush    Cell
 
-	// previousMode 는 지금 도구 직전에 들었던 도구다. 글자 모드에서 Esc 로 여기로 돌아간다.
-	previousMode mode
-	brush        Cell
-
-	// 글자 모드의 커서와, Enter 가 돌아갈 열이다.
+	// 글자 모드의 커서와, Enter 가 돌아갈 열이다. 글자 모드를 나갔다 들어와도 이어지도록 여기 둔다.
 	cursorX, cursorY, lineStart int
 
 	hoverX, hoverY int // 마우스가 짚은 판 위의 칸. 판 밖이면 -1.
@@ -67,17 +67,13 @@ type sketch struct {
 
 func newSketch(path string, canvas *Canvas) *sketch {
 	return &sketch{
-		path:         path,
-		canvas:       canvas,
-		mode:         modeBrush,
-		previousMode: modeBrush,
-		figure:       figureDot,
-		brush:        Cell{Glyph: "#", Fg: NoColor, Bg: NoColor},
-		hoverX:       -1, hoverY: -1,
+		path:   path,
+		canvas: canvas,
+		figure: figureDot,
+		brush:  Cell{Glyph: "#", Fg: NoColor, Bg: NoColor},
+		hoverX: -1, hoverY: -1,
 	}
 }
-
-func (s *sketch) Init() tea.Cmd { return nil }
 
 // viewHeight 는 띠를 뺀 화면 줄 수다. 창(색표 등)은 이 안 가운데에 뜬다.
 func (s *sketch) viewHeight() int { return max(s.height-1, 0) }
@@ -92,25 +88,9 @@ func (s *sketch) canvasViewWidth() int { return max(s.width-s.originX(), 0) }
 
 func (s *sketch) canvasViewHeight() int { return max(s.viewHeight()-1, 0) }
 
-func (s *sketch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		s.width, s.height = msg.Width, msg.Height
-		s.scrollBy(0, 0)
-		return s, nil
-	case tea.KeyPressMsg:
-		return s.key(msg)
-	case tea.MouseClickMsg:
-		return s.click(tea.Mouse(msg))
-	case tea.MouseMotionMsg:
-		s.motion(tea.Mouse(msg))
-	case tea.MouseReleaseMsg:
-		s.release()
-		s.endEdit()
-	case tea.MouseWheelMsg:
-		s.wheel(tea.Mouse(msg))
-	}
-	return s, nil
+func (s *sketch) resize(msg tea.WindowSizeMsg) {
+	s.width, s.height = msg.Width, msg.Height
+	s.scrollBy(0, 0)
 }
 
 // save 는 판을 파일에 쓴다. 되든 안 되든 띠에 적는다. 못 써도 그리던 것은 그대로 있어야 하므로
@@ -124,66 +104,75 @@ func (s *sketch) save() {
 	s.message = "저장했다: " + s.path
 }
 
-// openColors · openGlyphs · openCommands 는 판 위에 창을 띄운다. 돌려주는 모델이 곧 다음 화면이다.
-func (s *sketch) openColors() (tea.Model, tea.Cmd) { return &viewColor{under: s}, nil }
+// openColors · openGlyphs · openCommands 는 판 위에 창을 띄운다. from 은 창을 연 모드 화면이고 창을
+// 닫으면 그리로 돌아간다. 돌려주는 모델이 곧 다음 화면이다.
+func (s *sketch) openColors(from tea.Model) (tea.Model, tea.Cmd) {
+	return &viewColor{sketch: s, under: from}, nil
+}
 
-func (s *sketch) openGlyphs() (tea.Model, tea.Cmd) { return newViewGlyph(s), nil }
+func (s *sketch) openGlyphs(from tea.Model) (tea.Model, tea.Cmd) { return newViewGlyph(s, from), nil }
 
-func (s *sketch) openCommands() (tea.Model, tea.Cmd) {
-	palette := &viewCommand{under: s, query: components.NewText("")}
+func (s *sketch) openCommands(from tea.Model) (tea.Model, tea.Cmd) {
+	palette := &viewCommand{sketch: s, under: from, query: components.NewText("")}
 	return palette, palette.query.Focus()
 }
 
-// sketchKeys 는 창이 떠 있어도 판이 받는 키다. 저장 · 되돌리기 · 끝내기는 창을 닫지 않고도 된다.
+// sketchKeys 는 어느 화면에서나 판이 받는 키다. 저장 · 되돌리기 · 끝내기는 창을 닫지 않고도 된다.
 var sketchKeys = []string{"ctrl+c", "ctrl+s", "ctrl+z", "ctrl+y", "ctrl+p"}
 
-// keyOver 는 창 over 가 떠 있을 때 받은 판의 키(sketchKeys)를 판에 넘긴다. 판이 제 화면을 그대로
-// 두면(저장 · 되돌리기) 창도 그대로 떠 있고, 다른 화면을 세우면(ctrl+p 의 팔레트, 끝내기) 그리로 간다.
-func (s *sketch) keyOver(over tea.Model, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	next, cmd := s.key(msg)
-	if next == tea.Model(s) {
-		return over, cmd
-	}
-	return next, cmd
-}
-
-func (s *sketch) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+// forgetQuit 는 ctrl+c 가 아닌 키를 받으면 "한 번 더 누르면 끝낸다" 를 거둔다. 모드 화면이 부른다.
+func (s *sketch) forgetQuit(msg tea.KeyPressMsg) {
 	if msg.String() != "ctrl+c" {
 		s.quitAsked = false
 	}
+}
+
+// sketchKey 는 판이 받는 키(sketchKeys)다. from 은 지금 모드 화면이다. 대개 from 을 그대로 돌려주고,
+// ctrl+p 는 from 위에 팔레트를 띄운다.
+func (s *sketch) sketchKey(from tea.Model, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		if s.dirty && !s.quitAsked {
 			s.quitAsked = true
 			s.message = "저장 안 한 것이 있다. ctrl+c 를 한 번 더 누르면 버리고 끝낸다"
-			return s, nil
+			return from, nil
 		}
-		return s, tea.Quit
+		return from, tea.Quit
 	case "ctrl+s":
 		s.save()
-		return s, nil
 	case "ctrl+z":
 		s.undo()
-		return s, nil
 	case "ctrl+y":
 		s.redo()
-		return s, nil
 	case "ctrl+p":
-		return s.openCommands()
-	case "tab":
-		next := (slices.Index(figures, s.figure) + 1) % len(figures)
-		s.setFigure(figures[next])
-		return s, nil
+		return s.openCommands(from)
 	}
-	return s.mode.keyPress(s, msg)
+	return from, nil
 }
 
-// toolKey 는 글자 모드가 아닐 때의 키다. 한 글자 키가 도구를 들고(mode.shortcut), wasd 와 방향키가
-// 판을 굴린다. 도구 줄의 오른쪽에 같은 키가 적혀 있다(toolbar.go).
+// keyOver 는 창 over 가 떠 있을 때 받은 판의 키(sketchKeys)를 판에 넘긴다. under 는 창 밑의 모드
+// 화면이다. 판이 모드 화면을 그대로 두면(저장 · 되돌리기) 창도 그대로 떠 있고, 다른 화면을 세우면
+// (ctrl+p 의 팔레트) 그리로 간다.
+func (s *sketch) keyOver(over, under tea.Model, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	next, cmd := s.sketchKey(under, msg)
+	if next == under {
+		return over, cmd
+	}
+	return next, cmd
+}
+
+// nextFigure 는 모양을 다음 것으로 돌린다(Tab). 끌던 것은 버린다.
+func (s *sketch) nextFigure() {
+	s.dragging = nil
+	s.figure = figures[(slices.Index(figures, s.figure)+1)%len(figures)]
+}
+
+// toolKey 는 글자 모드가 아닐 때의 키다. 한 글자 키가 도구를 들고(modes), wasd 와 방향키가 판을
+// 굴린다. 도구 줄의 오른쪽에 같은 키가 적혀 있다(toolbar.go). from 은 지금 모드 화면이다.
 //
 // 글자 키는 붓 글자를 안 바꾼다. 바꾸던 때는 잘못 누른 키나 켜 둔 입력기 때문에 모르는 새 붓이 바뀌어
 // 있었다. 붓 글자는 글자표를 연 동안에만 키로 고른다(viewGlyph.key).
-func (s *sketch) toolKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (s *sketch) toolKey(from tea.Model, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// 글자 모드에서 한글을 치다 Esc 로 나오면 입력기가 켜진 채라 b 가 ㅠ 로 온다. 키가 안 먹는
 	// 까닭이 안 보이므로 띠에 적는다. 글자 모드와 글자표는 한글이 곧 뜻이라 여기서만 잰다.
 	switch {
@@ -193,18 +182,17 @@ func (s *sketch) toolKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		s.imeOn = false
 	}
 	for _, m := range modes {
-		if msg.String() == m.shortcut() {
-			s.setMode(m)
-			return s, nil
+		if msg.String() == m.key {
+			return m.open(s, from)
 		}
 	}
 	switch msg.String() {
 	case "q":
 		s.pickHovered()
 	case "c":
-		return s.openColors()
+		return s.openColors(from)
 	case "v":
-		return s.openGlyphs()
+		return s.openGlyphs(from)
 	case "w", "up":
 		s.scrollBy(0, -1)
 	case "s", "down":
@@ -214,17 +202,7 @@ func (s *sketch) toolKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "d", "right":
 		s.scrollBy(1, 0)
 	}
-	return s, nil
-}
-
-// setMode 는 모드를 바꾼다. 바뀌면 직전 모드를 적어 둔다(글자 모드의 Esc 가 돌아갈 곳). 끌던 모양은
-// 버린다. 모드가 바뀐 뒤 버튼을 떼면 무엇을 그릴지 모른다.
-func (s *sketch) setMode(next mode) {
-	s.dragging = nil
-	if next != s.mode {
-		s.previousMode = s.mode
-	}
-	s.mode = next
+	return from, nil
 }
 
 // textKey 는 글자 모드의 키다. 방향키는 커서를 옮기고, 글자 키는 커서 칸에 적는다.
@@ -308,17 +286,18 @@ func (s *sketch) canvasAt(mouse tea.Mouse) (x, y int, ok bool) {
 	return x, y, s.canvas.inside(x, y)
 }
 
-func (s *sketch) click(mouse tea.Mouse) (tea.Model, tea.Cmd) {
+// onChrome 은 누름이 판이 아니라 띠나 도구 줄 위인지다.
+func (s *sketch) onChrome(mouse tea.Mouse) bool {
+	return mouse.Y == s.height-1 || mouse.X < toolbarWidth
+}
+
+// clickChrome 은 띠와 도구 줄의 누름이다. from 은 지금 모드 화면, label 은 그 화면이 띠에 적은 도구
+// 토막이다. 띠의 토막 자리를 그린 것과 같게 재야 한다.
+func (s *sketch) clickChrome(from tea.Model, label string, mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if mouse.Y == s.height-1 {
-		return s.clickStrip(mouse)
+		return s.clickStrip(from, label, mouse)
 	}
-	if mouse.X < toolbarWidth {
-		return s.clickToolbar(mouse)
-	}
-	if x, y, ok := s.canvasAt(mouse); ok {
-		s.mode.press(s, mouse.Button, x, y)
-	}
-	return s, nil
+	return s.clickToolbar(from, mouse)
 }
 
 // takeCell 은 칸의 글자와 두 색을 붓에 담는다. 넓은 글자의 오른쪽 반쪽을 짚으면 그 글자를 담는다.
@@ -342,28 +321,15 @@ func (s *sketch) pickHovered() {
 	s.takeCell(s.hoverX, s.hoverY)
 }
 
-func (s *sketch) motion(mouse tea.Mouse) {
-	x, y, ok := s.canvasAt(mouse)
+// hover 는 마우스가 짚은 판 칸을 적어 두고 돌려준다. 판 밖이면 ok 가 false 다. 짚은 칸은 q
+// (pickHovered)와 눈금, 띠가 본다.
+func (s *sketch) hover(mouse tea.Mouse) (x, y int, ok bool) {
+	x, y, ok = s.canvasAt(mouse)
 	s.hoverX, s.hoverY = -1, -1
-	if !ok {
-		return
+	if ok {
+		s.hoverX, s.hoverY = x, y
 	}
-	s.hoverX, s.hoverY = x, y
-	s.mode.move(s, mouse.Button, x, y)
-}
-
-// stroke 는 한 칸씩 모양에서 버튼이 눌린 채 지나간 칸에 손을 댄다. 우클릭은 어느 도구에서나 지우개이고,
-// 좌클릭은 지금 도구를 쓴다(apply).
-func (s *sketch) stroke(button tea.MouseButton, x, y int) {
-	switch button {
-	case tea.MouseRight:
-		s.canvas.Erase(x, y)
-	case tea.MouseLeft:
-		s.mode.apply(s, s.canvas, x, y)
-	default:
-		return
-	}
-	s.dirty = true
+	return x, y, ok
 }
 
 func (s *sketch) wheel(mouse tea.Mouse) {
@@ -377,11 +343,8 @@ func (s *sketch) wheel(mouse tea.Mouse) {
 	case tea.MouseWheelRight:
 		s.scrollBy(3, 0)
 	}
-	// 판이 굴러 마우스 밑의 칸이 바뀌었다. 짚은 칸은 q(pickHovered)와 눈금이 본다.
-	s.hoverX, s.hoverY = -1, -1
-	if x, y, ok := s.canvasAt(mouse); ok {
-		s.hoverX, s.hoverY = x, y
-	}
+	// 판이 굴러 마우스 밑의 칸이 바뀌었다.
+	s.hover(mouse)
 }
 
 var popupStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
@@ -410,38 +373,34 @@ func (s *sketch) insidePopup(box string, mouse tea.Mouse) (x, y int) {
 	return mouse.X - originX - 1, mouse.Y - originY - 1
 }
 
-func (s *sketch) View() tea.View { return s.frame("") }
-
-// frame 은 판 화면에 창 box 를 얹어 그린다. box 가 비면 창이 없다. 창들은 제 상자를 그려 이것으로 판
-// 위에 얹는다(viewColor.View 등).
-func (s *sketch) frame(box string) tea.View {
+// render 는 모드 화면이 그리는 판 화면이다. canvas 는 그릴 판(끄는 중이면 미리 보기 사본), tool 은
+// 도구 줄에서 뒤집어 보일 도구 이름, label 은 띠의 도구 토막, cursor 는 터미널 커서(없으면 nil)다.
+func (s *sketch) render(canvas *Canvas, tool, label string, cursor *tea.Cursor) tea.View {
 	if s.width == 0 || s.height == 0 {
 		return tea.NewView("")
 	}
-	// 끄는 중인 모양은 판의 사본에 그려 보인다. 원본에는 버튼을 뗄 때 적는다.
-	canvas := s.canvas
-	if s.dragging != nil {
-		canvas = s.canvas.clone()
-		s.drawDrag(canvas)
-	}
-	view := s.withToolbar(s.board(canvas))
-	if box != "" {
-		x, y := s.popupOrigin(box)
-		view = lipgloss.NewCanvas(s.width, s.viewHeight()).
-			Compose(lipgloss.NewCompositor(
-				lipgloss.NewLayer(view),
-				lipgloss.NewLayer(box).X(x).Y(y).Z(1),
-			)).
-			Render()
-	}
-
-	out := tea.NewView(view + "\n" + s.strip())
+	out := tea.NewView(s.withToolbar(s.board(canvas), tool) + "\n" + s.strip(label))
 	out.AltScreen = true
 	out.MouseMode = tea.MouseModeAllMotion
-	// 창이 떠 있으면 커서를 숨긴다. 커서는 판 위의 칸에 두는 것이라 창 위에 뜨면 안 된다.
-	if box == "" {
-		out.Cursor = s.mode.cursor(s)
+	out.Cursor = cursor
+	return out
+}
+
+// overlay 는 모드 화면 under 위에 창 box 를 얹는다. 창들이 제 상자를 그려 이것으로 얹는다(viewColor.View
+// 등). 커서는 판 위의 칸에 두는 것이라 창이 떠 있으면 숨긴다.
+func (s *sketch) overlay(under tea.Model, box string) tea.View {
+	out := under.View()
+	if s.width == 0 || s.height == 0 {
+		return out
 	}
+	x, y := s.popupOrigin(box)
+	out.SetContent(lipgloss.NewCanvas(s.width, s.height).
+		Compose(lipgloss.NewCompositor(
+			lipgloss.NewLayer(out.Content),
+			lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+		)).
+		Render())
+	out.Cursor = nil
 	return out
 }
 
@@ -453,14 +412,14 @@ const stripHints = "wasd 굴림 Tab 모양 ^P 명령 ^S 저장 ^C 끝"
 // stripPart 는 띠 왼쪽의 한 토막이다. opens 가 있으면 그 토막을 누를 때 그 창이 뜬다.
 type stripPart struct {
 	text  string
-	opens func(s *sketch) (tea.Model, tea.Cmd)
+	opens func(s *sketch, from tea.Model) (tea.Model, tea.Cmd)
 }
 
 // stripGap 은 띠의 토막 사이 빈칸이다. 그리는 곳과 누름을 재는 곳이 같은 값을 봐야 한다.
 const stripGap = "  "
 
-// stripParts 는 띠 왼쪽의 토막들이다. 붓과 색, 모드, 짚은 칸, 알림.
-func (s *sketch) stripParts() []stripPart {
+// stripParts 는 띠 왼쪽의 토막들이다. 붓과 색, 도구(label), 짚은 칸, 알림.
+func (s *sketch) stripParts(label string) []stripPart {
 	parts := []stripPart{}
 	// 입력기 안내는 맨 앞이다. 띠가 좁으면 뒤가 잘리는데 이것이 잘리면 안 된다.
 	if s.imeOn {
@@ -471,7 +430,7 @@ func (s *sketch) stripParts() []stripPart {
 		stripPart{text: "붓 " + brushLabel(s.brush), opens: (*sketch).openGlyphs},
 		stripPart{text: "전경 " + colorLabel(s.brush.Fg), opens: (*sketch).openColors},
 		stripPart{text: "배경 " + colorLabel(s.brush.Bg), opens: (*sketch).openColors},
-		stripPart{text: s.mode.label(s)},
+		stripPart{text: label},
 	)
 	if s.hoverX >= 0 {
 		parts = append(parts, stripPart{text: fmt.Sprintf("(%d,%d)", s.hoverX, s.hoverY)})
@@ -490,9 +449,9 @@ func (s *sketch) stripParts() []stripPart {
 // 왼쪽은 마우스가 움직이고 알림이 뜰 때마다 길이가 바뀐다. 안내를 그 뒤에 이어 붙이면 안내가
 // 따라 흔들려서 오른쪽에 떼어 두었다. 둘이 모자라면 왼쪽이 잘린다. 안내는 창이 안내보다 좁을 때만
 // 잘린다.
-func (s *sketch) strip() string {
+func (s *sketch) strip(label string) string {
 	texts := []string{}
-	for _, part := range s.stripParts() {
+	for _, part := range s.stripParts(label) {
 		texts = append(texts, part.text)
 	}
 	hints := ansi.Truncate(stripHints, s.width, "…")
@@ -505,22 +464,22 @@ func (s *sketch) strip() string {
 }
 
 // clickStrip 은 띠의 누름이다. 누른 곳의 토막이 여는 창이 있으면 연다.
-func (s *sketch) clickStrip(mouse tea.Mouse) (tea.Model, tea.Cmd) {
+func (s *sketch) clickStrip(from tea.Model, label string, mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if mouse.Button != tea.MouseLeft {
-		return s, nil
+		return from, nil
 	}
 	x := 0
-	for _, part := range s.stripParts() {
+	for _, part := range s.stripParts(label) {
 		width := ansi.StringWidth(part.text)
 		if mouse.X >= x && mouse.X < x+width {
 			if part.opens == nil {
-				return s, nil
+				return from, nil
 			}
-			return part.opens(s)
+			return part.opens(s, from)
 		}
 		x += width + ansi.StringWidth(stripGap)
 	}
-	return s, nil
+	return from, nil
 }
 
 // brushLabel 은 띠에 보이는 붓이다. 글자 뒤에 코드 포인트를 붙인다(U+25B2). 비슷하게 생긴 글자(─ ━,

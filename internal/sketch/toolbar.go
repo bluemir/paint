@@ -28,24 +28,22 @@ var (
 
 // toolbarRow 는 도구 줄의 한 줄이다. 빈 줄(구분)은 label 이 nil 이다.
 //
-// label 이 함수인 것은 붓 · 전경 · 배경 줄이 지금 값을 보여야 해서다. active 는 모드 도구만 쓴다.
-// key 는 오른쪽 끝에 적는 단축키다. 누르는 것은 toolKey 가 받는다. 여기는 보이기만 한다.
+// label 이 함수인 것은 붓 · 전경 · 배경 줄이 지금 값을 보여야 해서다. active 는 뒤집어 보일 줄인지다.
+// tool 은 지금 모드 화면의 도구 이름이다. key 는 오른쪽 끝에 적는 단축키다. 누르는 것은 toolKey 가
+// 받는다. 여기는 보이기만 한다. run 은 누른 것이고 from 은 지금 모드 화면이다.
 type toolbarRow struct {
 	label  func(s *sketch) string
 	key    string
-	active func(s *sketch) bool
-	run    func(s *sketch) (tea.Model, tea.Cmd)
+	active func(s *sketch, tool string) bool
+	run    func(s *sketch, from tea.Model) (tea.Model, tea.Cmd)
 }
 
-func modeRow(m mode) toolbarRow {
+func modeRow(m modeEntry) toolbarRow {
 	return toolbarRow{
-		label:  func(*sketch) string { return m.String() },
-		key:    m.shortcut(),
-		active: func(s *sketch) bool { return s.mode == m },
-		run: func(s *sketch) (tea.Model, tea.Cmd) {
-			s.setMode(m)
-			return s, nil
-		},
+		label:  func(*sketch) string { return m.name },
+		key:    m.key,
+		active: func(_ *sketch, tool string) bool { return tool == m.name },
+		run:    m.open,
 	}
 }
 
@@ -53,10 +51,10 @@ func modeRow(m mode) toolbarRow {
 func figureRow(f figure) toolbarRow {
 	return toolbarRow{
 		label:  func(*sketch) string { return f.String() },
-		active: func(s *sketch) bool { return s.figure == f },
-		run: func(s *sketch) (tea.Model, tea.Cmd) {
-			s.setFigure(f)
-			return s, nil
+		active: func(s *sketch, _ string) bool { return s.figure == f },
+		run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
+			s.figure = f
+			return from, nil
 		},
 	}
 }
@@ -93,17 +91,17 @@ var fixedRows = []toolbarRow{
 	{label: fixedLabel("스포이드"), key: "q"},
 	{},
 	{label: fixedLabel("명령"), key: "^P", run: (*sketch).openCommands},
-	{label: fixedLabel("저장"), key: "^S", run: func(s *sketch) (tea.Model, tea.Cmd) {
+	{label: fixedLabel("저장"), key: "^S", run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
 		s.save()
-		return s, nil
+		return from, nil
 	}},
-	{label: fixedLabel("되돌리기"), key: "^Z", run: func(s *sketch) (tea.Model, tea.Cmd) {
+	{label: fixedLabel("되돌리기"), key: "^Z", run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
 		s.undo()
-		return s, nil
+		return from, nil
 	}},
-	{label: fixedLabel("다시"), key: "^Y", run: func(s *sketch) (tea.Model, tea.Cmd) {
+	{label: fixedLabel("다시"), key: "^Y", run: func(s *sketch, from tea.Model) (tea.Model, tea.Cmd) {
 		s.redo()
-		return s, nil
+		return from, nil
 	}},
 }
 
@@ -115,8 +113,9 @@ func swatch(color Color) string {
 	return lipgloss.NewStyle().Background(lipgloss.ANSIColor(color)).Render("  ")
 }
 
-// toolbarLine 은 도구 줄의 row 번째 줄이다. 폭이 늘 toolbarWidth 다.
-func (s *sketch) toolbarLine(row int) string {
+// toolbarLine 은 도구 줄의 row 번째 줄이다. 폭이 늘 toolbarWidth 다. tool 은 지금 모드 화면의 도구
+// 이름이다. 그 줄을 뒤집어 보인다.
+func (s *sketch) toolbarLine(row int, tool string) string {
 	if row >= len(tools) || tools[row].label == nil {
 		return toolbarStyle.Render(strings.Repeat(" ", toolbarWidth))
 	}
@@ -124,24 +123,24 @@ func (s *sketch) toolbarLine(row int) string {
 	key := item.key + " "
 	text := ansi.Truncate(" "+item.label(s), toolbarWidth-ansi.StringWidth(key), "")
 	text += strings.Repeat(" ", toolbarWidth-ansi.StringWidth(text)-ansi.StringWidth(key)) + key
-	if item.active != nil && item.active(s) {
+	if item.active != nil && item.active(s, tool) {
 		return toolActiveStyle.Render(text)
 	}
 	return toolbarStyle.Render(text)
 }
 
 // withToolbar 는 판 줄마다 왼쪽에 도구 줄을 붙인다.
-func (s *sketch) withToolbar(board string) string {
+func (s *sketch) withToolbar(board, tool string) string {
 	lines := strings.Split(board, "\n")
 	for row := range lines {
-		lines[row] = s.toolbarLine(row) + lines[row]
+		lines[row] = s.toolbarLine(row, tool) + lines[row]
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (s *sketch) clickToolbar(mouse tea.Mouse) (tea.Model, tea.Cmd) {
+func (s *sketch) clickToolbar(from tea.Model, mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if mouse.Button != tea.MouseLeft || mouse.Y >= len(tools) || tools[mouse.Y].run == nil {
-		return s, nil
+		return from, nil
 	}
-	return tools[mouse.Y].run(s)
+	return tools[mouse.Y].run(s, from)
 }
