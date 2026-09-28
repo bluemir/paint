@@ -9,6 +9,7 @@
 package sketch
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -25,21 +26,21 @@ var (
 	toolActiveStyle = lipgloss.NewStyle().Reverse(true)
 )
 
-// tool 은 도구 줄의 한 줄이다. 빈 줄(구분)은 label 이 nil 이다.
+// toolbarRow 는 도구 줄의 한 줄이다. 빈 줄(구분)은 label 이 nil 이다.
 //
 // label 이 함수인 것은 붓 · 전경 · 배경 줄이 지금 값을 보여야 해서다. active 는 모드 도구만 쓴다.
 // key 는 오른쪽 끝에 적는 단축키다. 누르는 것은 toolKey 가 받는다. 여기는 보이기만 한다.
-type tool struct {
+type toolbarRow struct {
 	label  func(s *sketch) string
 	key    string
 	active func(s *sketch) bool
 	run    func(s *sketch) tea.Cmd
 }
 
-func modeTool(m mode, key string) tool {
-	return tool{
+func modeRow(m mode) toolbarRow {
+	return toolbarRow{
 		label:  func(*sketch) string { return m.String() },
-		key:    key,
+		key:    m.shortcut(),
 		active: func(s *sketch) bool { return s.mode == m },
 		run: func(s *sketch) tea.Cmd {
 			s.setMode(m)
@@ -48,9 +49,9 @@ func modeTool(m mode, key string) tool {
 	}
 }
 
-// figureTool 은 모양 하나를 고르는 줄이다. 키 대신 Tab 이 돌므로 키 칸은 비운다.
-func figureTool(f figure) tool {
-	return tool{
+// figureRow 는 모양 하나를 고르는 줄이다. 키 대신 Tab 이 돌므로 키 칸은 비운다.
+func figureRow(f figure) toolbarRow {
+	return toolbarRow{
 		label:  func(*sketch) string { return f.String() },
 		active: func(s *sketch) bool { return s.figure == f },
 		run: func(s *sketch) tea.Cmd {
@@ -62,19 +63,28 @@ func figureTool(f figure) tool {
 
 func fixedLabel(text string) func(*sketch) string { return func(*sketch) string { return text } }
 
-// tools 는 도구 줄이다. 목록 차례가 곧 위에서부터의 줄이다.
-var tools = []tool{
-	modeTool(modeBrush, "b"),
-	modeTool(modeText, "t"),
-	modeTool(modePaint, "r"),
-	modeTool(modeErase, "e"),
-	{},
-	// 모양은 Tab 으로 돈다. 눌러서 고를 수도 있다. 브러시 · 칠하기 · 지우기가 함께 쓴다.
-	figureTool(figureDot),
-	figureTool(figureLine),
-	figureTool(figureBox),
-	figureTool(figureFill),
-	{},
+// tools 는 도구 줄이다. 목록 차례가 곧 위에서부터의 줄이다. 도구와 모양은 제 목록(modes, figures)에서
+// 한 줄씩 세운다. 모양은 Tab 으로 돈다. 눌러서 고를 수도 있다. 브러시 · 칠하기 · 지우기가 함께 쓴다.
+var tools = slices.Concat(modeRows(), []toolbarRow{{}}, figureRows(), []toolbarRow{{}}, fixedRows)
+
+func modeRows() []toolbarRow {
+	out := []toolbarRow{}
+	for _, m := range modes {
+		out = append(out, modeRow(m))
+	}
+	return out
+}
+
+func figureRows() []toolbarRow {
+	out := []toolbarRow{}
+	for _, f := range figures {
+		out = append(out, figureRow(f))
+	}
+	return out
+}
+
+// fixedRows 는 도구 줄의 붓 · 색 · 스포이드와 명령 · 저장 · 되돌리기 줄이다.
+var fixedRows = []toolbarRow{
 	{label: func(s *sketch) string { return "붓 " + s.brush.style().Render(s.brush.Glyph) }, key: "v", run: func(s *sketch) tea.Cmd { return s.openPopup(popupGlyph) }},
 	{label: func(s *sketch) string { return "전경 " + swatch(s.brush.Fg) }, key: "c", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},
 	{label: func(s *sketch) string { return "배경 " + swatch(s.brush.Bg) }, key: "c", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},

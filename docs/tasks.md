@@ -24,5 +24,5 @@
 - [x] 명령이름 정리
 	- 붓, 글자, 칠하기, 지우기
 - 리팩토링
-	- [ ] mode 를 전략 pattern 으로 변경
-	- [ ] 모양도 전략 pattern 으로 변경
+	- [x] mode 를 전략 pattern 으로 변경 (ADR-0004)
+	- [x] 모양도 전략 pattern 으로 변경 (ADR-0004)

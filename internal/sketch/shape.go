@@ -1,6 +1,9 @@
 // 모양이다. 도구(브러시 · 칠하기 · 지우기)가 "무엇을 하나" 라면 모양은 "어디에 하나" 다. 둘을 따로
 // 고른다. 도구 셋 × 모양 넷이 모드 열둘이 되지 않게 하려는 것이다. (ADR-0001 §4)
 //
+// 모양마다 타입이 하나다(figure). 새 모양은 타입 하나를 두고 figures 에 올리면 Tab · 도구 줄 · 팔레트에
+// 다 나온다. (ADR-0004)
+//
 //   - 한 칸씩: 누른 채 지나간 칸마다 도구를 쓴다.
 //   - 직선 · 테두리 · 채움: 누른 곳에서 끌고 가는 동안 모양이 미리 보이고, 버튼을 떼면 판에 적힌다.
 //     우클릭은 끌던 것을 버린다.
@@ -16,25 +19,71 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-type figure int
+type figure interface {
+	// String 은 도구 줄과 띠에 보이는 이름이다. command 는 명령 팔레트에 오르는 이름이다.
+	String() string
+	command() string
+	// hint 는 띠에 적는 마우스가 하는 일이다. 한 칸씩은 도구마다 다르므로 도구의 안내(toolHint)를 그대로
+	// 쓰고, 끄는 모양은 도구와 상관없이 같다.
+	hint(toolHint string) string
+	// press 와 move 는 판 위의 누름과, 누른 채 움직인 것이다. 도구(figureMode)가 넘겨준다.
+	press(s *sketch, button tea.MouseButton, x, y int)
+	move(s *sketch, button tea.MouseButton, x, y int)
+	// points 는 끌어 간 모양이 덮는 칸이다. 가로로는 step 칸씩 건넌다. 한 칸씩은 끌지 않아 쓰지 않는다.
+	points(d drag, step int) []point
+}
 
-const (
-	figureDot figure = iota
-	figureLine
-	figureBox
-	figureFill
+var (
+	figureDot  figure = dotFigure{}
+	figureLine figure = lineFigure{dragFigure{name: "직선", commandName: "line"}}
+	figureBox  figure = boxFigure{dragFigure{name: "테두리", commandName: "box"}}
+	figureFill figure = fillFigure{dragFigure{name: "채움", commandName: "fill"}}
 )
 
-func (f figure) String() string {
-	switch f {
-	case figureLine:
-		return "직선"
-	case figureBox:
-		return "테두리"
-	case figureFill:
-		return "채움"
+// figures 는 모양 목록이다. 목록 차례가 곧 Tab 이 도는 차례이자 도구 줄과 팔레트에 뜨는 차례다.
+var figures = []figure{figureDot, figureLine, figureBox, figureFill}
+
+// dotFigure 는 누른 채 지나간 칸마다 도구를 쓴다.
+type dotFigure struct{}
+
+func (dotFigure) String() string              { return "한 칸씩" }
+func (dotFigure) command() string             { return "dot" }
+func (dotFigure) hint(toolHint string) string { return toolHint }
+
+func (dotFigure) press(s *sketch, button tea.MouseButton, x, y int) { s.stroke(button, x, y) }
+func (dotFigure) move(s *sketch, button tea.MouseButton, x, y int)  { s.stroke(button, x, y) }
+
+func (dotFigure) points(drag, int) []point { return nil }
+
+// dragFigure 는 끌어서 그리는 모양(직선 · 테두리 · 채움)이 함께 쓰는 부분이다. 누른 곳에서 끌고 가는
+// 동안 판의 사본에 모양을 그려 미리 보이고(View), 버튼을 떼면 원본에 적는다(release). 덮는 칸
+// (points)은 품은 쪽이 정한다.
+type dragFigure struct {
+	name, commandName string
+}
+
+func (f dragFigure) String() string   { return f.name }
+func (f dragFigure) command() string  { return f.commandName }
+func (dragFigure) hint(string) string { return "끌어 그림·우 취소" }
+
+// press 는 좌클릭이 끌기를 시작하고, 끄는 중 우클릭은 끌던 것을 버린다. 끄는 중이 아닐 때 우클릭은
+// 다른 때처럼 지우개다.
+func (dragFigure) press(s *sketch, button tea.MouseButton, x, y int) {
+	switch {
+	case button == tea.MouseLeft:
+		s.dragging = &drag{fromX: x, fromY: y, toX: x, toY: y}
+	case button == tea.MouseRight && s.dragging != nil:
+		s.dragging = nil
+	default:
+		s.stroke(button, x, y)
 	}
-	return "한 칸씩"
+}
+
+// move 는 끄는 동안 끝만 옮긴다. 칸에는 버튼을 뗄 때 적는다.
+func (dragFigure) move(s *sketch, _ tea.MouseButton, x, y int) {
+	if s.dragging != nil {
+		s.dragging.toX, s.dragging.toY = x, y
+	}
 }
 
 // drag 는 끌고 있는 모양의 두 끝이다.
@@ -64,38 +113,47 @@ func span(from, to int) []int {
 	return out
 }
 
-// points 는 모양이 덮는 칸이다. 가로로는 step 칸씩 건넌다. 한 칸씩은 끌기가 아니라 여기 오지 않는다.
-//
-//   - 직선: 가로나 세로. 끌어 간 거리가 긴 축을 따르고, 짧은 축은 누른 곳에 붙인다.
-//   - 테두리: 두 모서리를 잇는 상자의 가장자리. 안은 건드리지 않는다.
-//   - 채움: 그 상자를 안까지 통째로.
-func (f figure) points(d drag, step int) []point {
-	columns := stampColumns(d.fromX, d.toX, step)
+// lineFigure 는 가로나 세로 직선이다. 끌어 간 거리가 긴 축을 따르고, 짧은 축은 누른 곳에 붙인다.
+type lineFigure struct{ dragFigure }
+
+func (lineFigure) points(d drag, step int) []point {
 	out := []point{}
-	switch f {
-	case figureLine:
-		if abs(d.toX-d.fromX) >= abs(d.toY-d.fromY) {
-			for _, x := range columns {
-				out = append(out, point{x, d.fromY})
-			}
-			return out
+	if abs(d.toX-d.fromX) >= abs(d.toY-d.fromY) {
+		for _, x := range stampColumns(d.fromX, d.toX, step) {
+			out = append(out, point{x, d.fromY})
 		}
-		for _, y := range span(d.fromY, d.toY) {
-			out = append(out, point{d.fromX, y})
-		}
-	case figureBox:
-		top, bottom := min(d.fromY, d.toY), max(d.fromY, d.toY)
-		for _, x := range columns {
-			out = append(out, point{x, top}, point{x, bottom})
-		}
-		for _, y := range span(top, bottom) {
-			out = append(out, point{columns[0], y}, point{columns[len(columns)-1], y})
-		}
-	case figureFill:
-		for _, y := range span(d.fromY, d.toY) {
-			for _, x := range columns {
-				out = append(out, point{x, y})
-			}
+		return out
+	}
+	for _, y := range span(d.fromY, d.toY) {
+		out = append(out, point{d.fromX, y})
+	}
+	return out
+}
+
+// boxFigure 는 두 모서리를 잇는 상자의 가장자리다. 안은 건드리지 않는다.
+type boxFigure struct{ dragFigure }
+
+func (boxFigure) points(d drag, step int) []point {
+	columns := stampColumns(d.fromX, d.toX, step)
+	top, bottom := min(d.fromY, d.toY), max(d.fromY, d.toY)
+	out := []point{}
+	for _, x := range columns {
+		out = append(out, point{x, top}, point{x, bottom})
+	}
+	for _, y := range span(top, bottom) {
+		out = append(out, point{columns[0], y}, point{columns[len(columns)-1], y})
+	}
+	return out
+}
+
+// fillFigure 는 그 상자를 안까지 통째로 덮는다.
+type fillFigure struct{ dragFigure }
+
+func (fillFigure) points(d drag, step int) []point {
+	out := []point{}
+	for _, y := range span(d.fromY, d.toY) {
+		for _, x := range stampColumns(d.fromX, d.toX, step) {
+			out = append(out, point{x, y})
 		}
 	}
 	return out
@@ -115,43 +173,10 @@ func (canvas *Canvas) clone() *Canvas {
 	return out
 }
 
-// toolStep 은 모양을 따라 가로로 몇 칸씩 건너 쓸지다. 브러시만 붓 폭이고, 칠하기 · 지우기는 칸마다다.
-func (s *sketch) toolStep() int {
-	if s.mode == modeBrush {
-		return cellWidth(s.brush)
-	}
-	return 1
-}
-
-// apply 는 지금 도구를 canvas 의 한 칸에 쓴다.
-func (s *sketch) apply(canvas *Canvas, x, y int) {
-	switch s.mode {
-	case modeBrush:
-		canvas.Put(x, y, s.brush)
-	case modePaint:
-		canvas.Recolor(x, y, s.brush.Fg, s.brush.Bg)
-	case modeErase:
-		canvas.Erase(x, y)
-	}
-}
-
 // drawDrag 는 끌고 있는 모양을 canvas 에 그린다.
 func (s *sketch) drawDrag(canvas *Canvas) {
-	for _, at := range s.figure.points(*s.dragging, s.toolStep()) {
-		s.apply(canvas, at.x, at.y)
-	}
-}
-
-// figureClick 은 직선 · 테두리 · 채움의 누름이다. 좌클릭이 끌기를 시작하고, 끄는 중 우클릭은 버린다.
-// 끄는 중이 아닐 때 우클릭은 다른 때처럼 지우개다.
-func (s *sketch) figureClick(button tea.MouseButton, x, y int) {
-	switch {
-	case button == tea.MouseLeft:
-		s.dragging = &drag{fromX: x, fromY: y, toX: x, toY: y}
-	case button == tea.MouseRight && s.dragging != nil:
-		s.dragging = nil
-	default:
-		s.stroke(button, x, y)
+	for _, at := range s.figure.points(*s.dragging, s.mode.step(s)) {
+		s.mode.apply(s, canvas, at.x, at.y)
 	}
 }
 

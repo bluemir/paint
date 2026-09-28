@@ -6,6 +6,7 @@
 package sketch
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,18 +20,35 @@ type command struct {
 	run  func(s *sketch) tea.Cmd
 }
 
-// commands 는 팔레트의 명령표다. 목록 차례가 곧 화면에 뜨는 차례다.
-var commands = []command{
-	{name: "color", desc: "색표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},
-	{name: "glyph", desc: "글자표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupGlyph) }},
-	{name: "brush", desc: "브러시 모드로", run: func(s *sketch) tea.Cmd { return s.switchMode(modeBrush) }},
-	{name: "text", desc: "글자 모드로", run: func(s *sketch) tea.Cmd { return s.switchMode(modeText) }},
-	{name: "paint", desc: "칠하기 모드로 (글자는 두고 색만)", run: func(s *sketch) tea.Cmd { return s.switchMode(modePaint) }},
-	{name: "erase", desc: "지우기 모드로", run: func(s *sketch) tea.Cmd { return s.switchMode(modeErase) }},
-	{name: "dot", desc: "모양: 한 칸씩", run: func(s *sketch) tea.Cmd { return s.switchFigure(figureDot) }},
-	{name: "line", desc: "모양: 직선", run: func(s *sketch) tea.Cmd { return s.switchFigure(figureLine) }},
-	{name: "box", desc: "모양: 테두리", run: func(s *sketch) tea.Cmd { return s.switchFigure(figureBox) }},
-	{name: "fill", desc: "모양: 채움", run: func(s *sketch) tea.Cmd { return s.switchFigure(figureFill) }},
+// commands 는 팔레트의 명령표다. 목록 차례가 곧 화면에 뜨는 차례다. 도구와 모양은 제 목록(modes,
+// figures)에서 가져온다.
+var commands = slices.Concat(
+	[]command{
+		{name: "color", desc: "색표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},
+		{name: "glyph", desc: "글자표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupGlyph) }},
+	},
+	modeCommands(),
+	figureCommands(),
+	editCommands,
+)
+
+func modeCommands() []command {
+	out := []command{}
+	for _, m := range modes {
+		out = append(out, command{name: m.command(), desc: m.desc(), run: func(s *sketch) tea.Cmd { return s.switchMode(m) }})
+	}
+	return out
+}
+
+func figureCommands() []command {
+	out := []command{}
+	for _, f := range figures {
+		out = append(out, command{name: f.command(), desc: "모양: " + f.String(), run: func(s *sketch) tea.Cmd { return s.switchFigure(f) }})
+	}
+	return out
+}
+
+var editCommands = []command{
 	{name: "undo", desc: "되돌린다", run: func(s *sketch) tea.Cmd {
 		s.undo()
 		return s.openPopup(popupNone)

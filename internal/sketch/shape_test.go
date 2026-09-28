@@ -12,7 +12,7 @@ func rows(canvas *Canvas) []string {
 	return strings.Split(ansi.Strip(canvas.renderArea(0, 0, canvas.Width, canvas.Height)), "\n")
 }
 
-// stamp 은 브러시 도구로 모양을 찍는다. 붓 폭만큼 건넌다(toolStep).
+// stamp 은 브러시 도구로 모양을 찍는다. 붓 폭만큼 건넌다(brushMode.step).
 func stamp(canvas *Canvas, f figure, d drag, brush Cell) {
 	for _, at := range f.points(d, cellWidth(brush)) {
 		canvas.Put(at.x, at.y, brush)

@@ -3,7 +3,7 @@
 // 텍스트 목업으로는 터미널 색을 입힐 수 없어서 있다. 마우스로 글자와 256색을 칠해 파일로 남기고,
 // 그 파일을 다시 열어 고친다. (ADR-0001)
 //
-// 모드는 넷이고 Tab 으로 돈다. 브러시에서는 좌클릭이 붓을 찍고 우클릭이 지운다. 글자에서는
+// 도구(mode.go)는 넷이고 키로 고르며, Tab 은 모양(shape.go)을 돈다. 브러시에서는 좌클릭이 붓을 찍고 우클릭이 지운다. 글자에서는
 // 클릭으로 커서를 놓고 치는 대로 적힌다. 칠하기에서는 글자를 두고 색만 붓 색으로 바꾼다. 지우기에서는
 // 좌클릭도 지운다. 붓 글자는 글자표(v)에서 고른다. 색표(c)와 글자표는 판 위에 뜨는 창이고, 명령
 // 팔레트(ctrl+p)와 도구 줄로도 열린다. 도구 키는 toolKey 에 있다.
@@ -30,49 +30,6 @@ func Run(ctx context.Context, path string, canvas *Canvas) error {
 	return errors.WithStack(err)
 }
 
-type mode int
-
-const (
-	modeBrush mode = iota
-	modeText
-	modePaint
-	modeErase
-)
-
-// 도구(mode)는 단축키(b t r e)로만 고르고, Tab 은 모양(figure)을 돈다. 모양은 브러시 · 칠하기 · 지우기가
-// 함께 쓴다(shape.go). 글자는 모양을 안 쓴다.
-var tabFigures = []figure{figureDot, figureLine, figureBox, figureFill}
-
-func (m mode) String() string {
-	switch m {
-	case modeText:
-		return "글자"
-	case modePaint:
-		return "칠하기"
-	case modeErase:
-		return "지우기"
-	}
-	return "브러시"
-}
-
-// toolLabel 은 띠에 적는 지금 도구와 모양, 그리고 마우스가 하는 일이다. 우클릭이 지우개라는 것이 안
-// 보이면 아무도 모른다.
-func (s *sketch) toolLabel() string {
-	if s.mode == modeText {
-		return s.mode.String() + "(클릭=커서·치면 적힘·Esc 나감)"
-	}
-	hint := "좌 찍음·우 지움"
-	switch {
-	case s.figure != figureDot:
-		hint = "끌어 그림·우 취소"
-	case s.mode == modePaint:
-		hint = "좌 색만 바꿈·우 지움"
-	case s.mode == modeErase:
-		hint = "좌·우 지움"
-	}
-	return s.mode.String() + "·" + s.figure.String() + "(" + hint + ")"
-}
-
 type popup int
 
 const (
@@ -96,10 +53,10 @@ type sketch struct {
 	// dragging 은 직선 · 테두리 · 채움에서 끌고 있는 모양이다. 끌고 있지 않으면 nil 이다. (shape.go)
 	dragging *drag
 
-	// textReturn 은 글자 모드에서 Esc 로 돌아갈 모드다.
-	textReturn mode
-	popup      popup
-	brush      Cell
+	// previousMode 는 지금 도구 직전에 들었던 도구다. 글자 모드에서 Esc 로 여기로 돌아간다.
+	previousMode mode
+	popup        popup
+	brush        Cell
 
 	// 명령 팔레트의 검색어와 걸러진 목록에서 짚은 줄이다. 팔레트가 열릴 때마다 비운다.
 	query         components.Text
@@ -129,10 +86,13 @@ type sketch struct {
 
 func newSketch(path string, canvas *Canvas) *sketch {
 	return &sketch{
-		path:   path,
-		canvas: canvas,
-		brush:  Cell{Glyph: "#", Fg: NoColor, Bg: NoColor},
-		hoverX: -1, hoverY: -1,
+		path:         path,
+		canvas:       canvas,
+		mode:         modeBrush,
+		previousMode: modeBrush,
+		figure:       figureDot,
+		brush:        Cell{Glyph: "#", Fg: NoColor, Bg: NoColor},
+		hoverX:       -1, hoverY: -1,
 	}
 }
 
@@ -239,8 +199,7 @@ func (s *sketch) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+p":
 		return s, s.openPopup(popupCommand)
 	case "esc":
-		// 창이 떠 있으면 창을 먼저 닫는다. 글자 모드는 글자 키가 전부 입력이라 도구 키로 못 나오므로
-		// Esc 가 나가는 길이다.
+		// 창이 떠 있으면 창을 먼저 닫는다. 창이 없으면 도구가 받는다(글자 모드는 그것으로 나간다).
 		if s.popup == popupGlyph && s.glyphSearching {
 			s.stopGlyphSearch()
 			return s, nil
@@ -248,10 +207,6 @@ func (s *sketch) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if s.popup != popupNone {
 			return s, s.openPopup(popupNone)
 		}
-		if s.mode == modeText {
-			s.setMode(s.textReturn)
-		}
-		return s, nil
 	}
 	// 팔레트가 떠 있으면 나머지 키는 전부 검색어로 간다. Tab 이나 글자 키가 판에 닿으면 안 된다.
 	if s.popup == popupCommand {
@@ -271,8 +226,8 @@ func (s *sketch) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "tab":
-		next := (slices.Index(tabFigures, s.figure) + 1) % len(tabFigures)
-		s.setFigure(tabFigures[next])
+		next := (slices.Index(figures, s.figure) + 1) % len(figures)
+		s.setFigure(figures[next])
 		return s, nil
 	}
 	if s.popup == popupGlyph {
@@ -282,18 +237,11 @@ func (s *sketch) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if s.popup != popupNone {
 		return s, nil
 	}
-	if s.mode == modeText {
-		// 글자 모드는 키 하나가 되돌리기 한 번이다.
-		s.beginEdit()
-		s.textKey(msg)
-		s.endEdit()
-		return s, nil
-	}
-	return s, s.toolKey(msg)
+	return s, s.mode.keyPress(s, msg)
 }
 
-// toolKey 는 글자 모드가 아닐 때의 키다. 한 글자 키가 도구를 들고, wasd 와 방향키가 판을 굴린다.
-// 도구 줄의 오른쪽에 같은 키가 적혀 있다(toolbar.go).
+// toolKey 는 글자 모드가 아닐 때의 키다. 한 글자 키가 도구를 들고(mode.shortcut), wasd 와 방향키가
+// 판을 굴린다. 도구 줄의 오른쪽에 같은 키가 적혀 있다(toolbar.go).
 //
 // 글자 키는 붓 글자를 안 바꾼다. 바꾸던 때는 잘못 누른 키나 켜 둔 입력기 때문에 모르는 새 붓이 바뀌어
 // 있었다. 붓 글자는 글자표를 연 동안에만 키로 고른다(glyphKey).
@@ -306,15 +254,13 @@ func (s *sketch) toolKey(msg tea.KeyPressMsg) tea.Cmd {
 	case asciiLetter(msg):
 		s.imeOn = false
 	}
+	for _, m := range modes {
+		if msg.String() == m.shortcut() {
+			s.setMode(m)
+			return nil
+		}
+	}
 	switch msg.String() {
-	case "b":
-		s.setMode(modeBrush)
-	case "t":
-		s.setMode(modeText)
-	case "r":
-		s.setMode(modePaint)
-	case "e":
-		s.setMode(modeErase)
 	case "q":
 		s.pickHovered()
 	case "c":
@@ -333,12 +279,12 @@ func (s *sketch) toolKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// setMode 는 모드를 바꾼다. 글자 모드로 들어갈 때는 Esc 로 돌아갈 모드를 적어 둔다. 끌던 모양은
+// setMode 는 모드를 바꾼다. 바뀌면 직전 모드를 적어 둔다(글자 모드의 Esc 가 돌아갈 곳). 끌던 모양은
 // 버린다. 모드가 바뀐 뒤 버튼을 떼면 무엇을 그릴지 모른다.
 func (s *sketch) setMode(next mode) {
 	s.dragging = nil
-	if next == modeText && s.mode != modeText {
-		s.textReturn = s.mode
+	if next != s.mode {
+		s.previousMode = s.mode
 	}
 	s.mode = next
 }
@@ -445,18 +391,7 @@ func (s *sketch) click(mouse tea.Mouse) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	switch {
-	case s.mode == modeText:
-		s.moveCursor(x, y)
-		s.lineStart = x
-	case s.figure != figureDot:
-		s.beginEdit()
-		s.figureClick(mouse.Button, x, y)
-	default:
-		// 누름부터 뗌까지가 되돌리기 한 번이다. 끌며 칠한 것이 한 번에 되돌아간다.
-		s.beginEdit()
-		s.stroke(mouse.Button, x, y)
-	}
+	s.mode.press(s, mouse.Button, x, y)
 	return nil
 }
 
@@ -494,19 +429,7 @@ func (s *sketch) motion(mouse tea.Mouse) {
 	if s.popup != popupNone {
 		return
 	}
-	// 끌어서 칠하는 것은 브러시 · 칠하기 · 지우기다. 박스 · 직선은 끄는 동안 끝을 옮기기만 한다. 글자
-	// 커서와 스포이드는 누른 곳 한 칸이다.
-	switch s.mode {
-	case modeText:
-		return
-	}
-	if s.figure != figureDot {
-		if s.dragging != nil {
-			s.dragging.toX, s.dragging.toY = x, y
-		}
-		return
-	}
-	s.stroke(mouse.Button, x, y)
+	s.mode.move(s, mouse.Button, x, y)
 }
 
 // stroke 는 한 칸씩 모양에서 버튼이 눌린 채 지나간 칸에 손을 댄다. 우클릭은 어느 도구에서나 지우개이고,
@@ -516,7 +439,7 @@ func (s *sketch) stroke(button tea.MouseButton, x, y int) {
 	case tea.MouseRight:
 		s.canvas.Erase(x, y)
 	case tea.MouseLeft:
-		s.apply(s.canvas, x, y)
+		s.mode.apply(s, s.canvas, x, y)
 	default:
 		return
 	}
@@ -654,25 +577,11 @@ func (s *sketch) View() tea.View {
 	out := tea.NewView(view + "\n" + s.strip())
 	out.AltScreen = true
 	out.MouseMode = tea.MouseModeAllMotion
-	out.Cursor = s.textCursor()
+	// 창이 떠 있으면 커서를 숨긴다. 커서는 판 위의 칸에 두는 것이라 창 위에 뜨면 안 된다.
+	if s.popup == popupNone {
+		out.Cursor = s.mode.cursor(s)
+	}
 	return out
-}
-
-// textCursor 는 글자 모드의 커서다. 칸을 뒤집어 그리지 않고 터미널의 진짜 커서를 그 칸에 둔다.
-//
-// 입력기가 조합 중인 글자(ㅎ → 하 → 한)는 앱에 오지 않고 터미널이 제 커서 자리에 그린다. 커서가
-// 화면 구석에 있으면 조합 중인 글자가 거기 떠서 안 보였다. 칸 위에 두면 적힐 곳에서 조립된다.
-//
-// 글자 모드가 아니거나 창이 떠 있거나 커서 칸이 굴려서 안 보이면 커서를 숨긴다.
-func (s *sketch) textCursor() *tea.Cursor {
-	if s.mode != modeText || s.popup != popupNone {
-		return nil
-	}
-	x, y := s.cursorX-s.left, s.cursorY-s.top
-	if x < 0 || y < 0 || x >= s.canvasViewWidth() || y >= s.canvasViewHeight() {
-		return nil
-	}
-	return tea.NewCursor(x+s.originX(), y+1)
 }
 
 var imeWarningStyle = lipgloss.NewStyle().Foreground(lipgloss.Red)
@@ -701,7 +610,7 @@ func (s *sketch) stripParts() []stripPart {
 		stripPart{text: "붓 " + brushLabel(s.brush), opens: popupGlyph},
 		stripPart{text: "전경 " + colorLabel(s.brush.Fg), opens: popupColor},
 		stripPart{text: "배경 " + colorLabel(s.brush.Bg), opens: popupColor},
-		stripPart{text: s.toolLabel()},
+		stripPart{text: s.mode.label(s)},
 	)
 	if s.hoverX >= 0 {
 		parts = append(parts, stripPart{text: fmt.Sprintf("(%d,%d)", s.hoverX, s.hoverY)})
