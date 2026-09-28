@@ -155,7 +155,7 @@ func TestLoadRejectsBadFiles(t *testing.T) {
 	}
 }
 
-// 색칠은 글자를 두고 색만 바꾼다. 넓은 글자는 어느 반쪽을 짚든 두 칸이 함께 바뀐다.
+// 칠하기는 글자를 두고 색만 바꾼다. 넓은 글자는 어느 반쪽을 짚든 두 칸이 함께 바뀐다.
 func TestRecolorKeepsGlyph(t *testing.T) {
 	for _, x := range []int{0, 1} {
 		canvas := NewCanvas(3, 1)
@@ -163,7 +163,7 @@ func TestRecolorKeepsGlyph(t *testing.T) {
 		canvas.Recolor(x, 0, 200, 17)
 		head, tail := canvas.At(0, 0), canvas.At(1, 0)
 		if head != (Cell{Glyph: "한", Fg: 200, Bg: 17}) || !tail.continuation() || tail.Fg != 200 || tail.Bg != 17 {
-			t.Errorf("x=%d 색칠 뒤 = %+v %+v", x, head, tail)
+			t.Errorf("x=%d 칠하기 뒤 = %+v %+v", x, head, tail)
 		}
 		if canvas.At(2, 0) != blank {
 			t.Errorf("x=%d: 옆 칸까지 바뀌었다 %+v", x, canvas.At(2, 0))

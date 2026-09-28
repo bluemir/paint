@@ -12,7 +12,7 @@ func rows(canvas *Canvas) []string {
 	return strings.Split(ansi.Strip(canvas.renderArea(0, 0, canvas.Width, canvas.Height)), "\n")
 }
 
-// stamp 은 칠하기 도구로 모양을 찍는다. 붓 폭만큼 건넌다(toolStep).
+// stamp 은 브러시 도구로 모양을 찍는다. 붓 폭만큼 건넌다(toolStep).
 func stamp(canvas *Canvas, f figure, d drag, brush Cell) {
 	for _, at := range f.points(d, cellWidth(brush)) {
 		canvas.Put(at.x, at.y, brush)
@@ -88,7 +88,7 @@ func TestFigureDragPreviewsThenCommits(t *testing.T) {
 	}
 }
 
-// 모양은 도구와 따로다. 색칠 · 지우기도 직선 · 채움을 쓴다. 색칠은 글자를 두고 색만 바꾼다.
+// 모양은 도구와 따로다. 칠하기 · 지우기도 직선 · 채움을 쓴다. 칠하기는 글자를 두고 색만 바꾼다.
 func TestFigureWorksWithEveryTool(t *testing.T) {
 	s := newTestSketch(10, 5)
 	s.setFigure(figureFill)
@@ -96,7 +96,7 @@ func TestFigureWorksWithEveryTool(t *testing.T) {
 	s.Update(canvasDrag(s, 5, 2, tea.MouseLeft))
 	s.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft})
 
-	s.setMode(modeRecolor)
+	s.setMode(modePaint)
 	s.brush.Fg = 196
 	s.setFigure(figureLine)
 	s.Update(canvasClick(s, 0, 1, tea.MouseLeft))
@@ -104,7 +104,7 @@ func TestFigureWorksWithEveryTool(t *testing.T) {
 	s.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft})
 	for x := range 6 {
 		if got := s.canvas.At(x, 1); got.Glyph != "#" || got.Fg != 196 {
-			t.Errorf("색칠 직선 (%d,1) = %+v", x, got)
+			t.Errorf("칠하기 직선 (%d,1) = %+v", x, got)
 		}
 	}
 
@@ -121,10 +121,10 @@ func TestFigureWorksWithEveryTool(t *testing.T) {
 // Tab 은 모양을 돈다. 도구는 그대로다.
 func TestTabCyclesFigures(t *testing.T) {
 	s := newTestSketch(10, 5)
-	s.setMode(modeRecolor)
+	s.setMode(modePaint)
 	for _, want := range []figure{figureLine, figureBox, figureFill, figureDot} {
 		s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-		if s.figure != want || s.mode != modeRecolor {
+		if s.figure != want || s.mode != modePaint {
 			t.Errorf("모양 %s, 도구 %s", s.figure, s.mode)
 		}
 	}

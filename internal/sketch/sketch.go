@@ -3,10 +3,10 @@
 // 텍스트 목업으로는 터미널 색을 입힐 수 없어서 있다. 마우스로 글자와 256색을 칠해 파일로 남기고,
 // 그 파일을 다시 열어 고친다. (ADR-0001)
 //
-// 모드는 넷이고 Tab 으로 돈다. 칠하기에서는 좌클릭이 붓으로 칠하고 우클릭이 지운다. 글자에서는
-// 클릭으로 커서를 놓고 치는 대로 적힌다. 색칠에서는 글자를 두고 색만 붓 색으로 바꾼다. 지우기에서는
+// 모드는 넷이고 Tab 으로 돈다. 브러시에서는 좌클릭이 붓을 찍고 우클릭이 지운다. 글자에서는
+// 클릭으로 커서를 놓고 치는 대로 적힌다. 칠하기에서는 글자를 두고 색만 붓 색으로 바꾼다. 지우기에서는
 // 좌클릭도 지운다. 붓 글자는 글자표(v)에서 고른다. 색표(c)와 글자표는 판 위에 뜨는 창이고, 명령
-// 팔레트(ctrl+p)와 도구 줄로도 열린다. 도구 키는 paintKey 에 있다.
+// 팔레트(ctrl+p)와 도구 줄로도 열린다. 도구 키는 toolKey 에 있다.
 
 package sketch
 
@@ -33,13 +33,13 @@ func Run(ctx context.Context, path string, canvas *Canvas) error {
 type mode int
 
 const (
-	modePaint mode = iota
+	modeBrush mode = iota
 	modeText
-	modeRecolor
+	modePaint
 	modeErase
 )
 
-// 도구(mode)는 단축키(b t f e)로만 고르고, Tab 은 모양(figure)을 돈다. 모양은 칠하기 · 색칠 · 지우기가
+// 도구(mode)는 단축키(b t r e)로만 고르고, Tab 은 모양(figure)을 돈다. 모양은 브러시 · 칠하기 · 지우기가
 // 함께 쓴다(shape.go). 글자는 모양을 안 쓴다.
 var tabFigures = []figure{figureDot, figureLine, figureBox, figureFill}
 
@@ -47,12 +47,12 @@ func (m mode) String() string {
 	switch m {
 	case modeText:
 		return "글자"
-	case modeRecolor:
-		return "색칠"
+	case modePaint:
+		return "칠하기"
 	case modeErase:
 		return "지우기"
 	}
-	return "칠하기"
+	return "브러시"
 }
 
 // toolLabel 은 띠에 적는 지금 도구와 모양, 그리고 마우스가 하는 일이다. 우클릭이 지우개라는 것이 안
@@ -61,11 +61,11 @@ func (s *sketch) toolLabel() string {
 	if s.mode == modeText {
 		return s.mode.String() + "(클릭=커서·치면 적힘·Esc 나감)"
 	}
-	hint := "좌 칠함·우 지움"
+	hint := "좌 찍음·우 지움"
 	switch {
 	case s.figure != figureDot:
 		hint = "끌어 그림·우 취소"
-	case s.mode == modeRecolor:
+	case s.mode == modePaint:
 		hint = "좌 색만 바꿈·우 지움"
 	case s.mode == modeErase:
 		hint = "좌·우 지움"
@@ -289,15 +289,15 @@ func (s *sketch) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		s.endEdit()
 		return s, nil
 	}
-	return s, s.paintKey(msg)
+	return s, s.toolKey(msg)
 }
 
-// paintKey 는 글자 모드가 아닐 때의 키다. 한 글자 키가 도구를 들고, wasd 와 방향키가 판을 굴린다.
+// toolKey 는 글자 모드가 아닐 때의 키다. 한 글자 키가 도구를 들고, wasd 와 방향키가 판을 굴린다.
 // 도구 줄의 오른쪽에 같은 키가 적혀 있다(toolbar.go).
 //
 // 글자 키는 붓 글자를 안 바꾼다. 바꾸던 때는 잘못 누른 키나 켜 둔 입력기 때문에 모르는 새 붓이 바뀌어
 // 있었다. 붓 글자는 글자표를 연 동안에만 키로 고른다(glyphKey).
-func (s *sketch) paintKey(msg tea.KeyPressMsg) tea.Cmd {
+func (s *sketch) toolKey(msg tea.KeyPressMsg) tea.Cmd {
 	// 글자 모드에서 한글을 치다 Esc 로 나오면 입력기가 켜진 채라 b 가 ㅠ 로 온다. 키가 안 먹는
 	// 까닭이 안 보이므로 띠에 적는다. 글자 모드와 글자표는 한글이 곧 뜻이라 여기서만 잰다.
 	switch {
@@ -308,11 +308,11 @@ func (s *sketch) paintKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch msg.String() {
 	case "b":
-		s.setMode(modePaint)
+		s.setMode(modeBrush)
 	case "t":
 		s.setMode(modeText)
-	case "f":
-		s.setMode(modeRecolor)
+	case "r":
+		s.setMode(modePaint)
 	case "e":
 		s.setMode(modeErase)
 	case "q":
@@ -494,7 +494,7 @@ func (s *sketch) motion(mouse tea.Mouse) {
 	if s.popup != popupNone {
 		return
 	}
-	// 끌어서 칠하는 것은 칠하기 · 색칠 · 지우기다. 박스 · 직선은 끄는 동안 끝을 옮기기만 한다. 글자
+	// 끌어서 칠하는 것은 브러시 · 칠하기 · 지우기다. 박스 · 직선은 끄는 동안 끝을 옮기기만 한다. 글자
 	// 커서와 스포이드는 누른 곳 한 칸이다.
 	switch s.mode {
 	case modeText:

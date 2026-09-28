@@ -28,7 +28,7 @@ func typed(text string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: []rune(text)[0], Text: text}
 }
 
-func TestPaintAndEraseWithMouse(t *testing.T) {
+func TestBrushAndEraseWithMouse(t *testing.T) {
 	s := newTestSketch(10, 5)
 	s.brush.Glyph = "@"
 	s.Update(canvasClick(s, 1, 1, tea.MouseLeft))
@@ -50,7 +50,7 @@ func TestPaintAndEraseWithMouse(t *testing.T) {
 }
 
 // 판이 화면보다 크면 굴린 만큼 밀린 칸에 칠한다.
-func TestPaintFollowsScroll(t *testing.T) {
+func TestBrushFollowsScroll(t *testing.T) {
 	s := newSketch("unused.json", NewCanvas(20, 20))
 	s.Update(tea.WindowSizeMsg{Width: toolbarWidth + 10, Height: 6})
 	s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -194,13 +194,13 @@ func TestClickOnRulerDoesNotPaint(t *testing.T) {
 	}
 }
 
-func TestRecolorModeChangesOnlyColor(t *testing.T) {
+func TestPaintModeChangesOnlyColor(t *testing.T) {
 	s := newTestSketch(10, 5)
 	s.brush.Glyph = "@"
 	s.Update(canvasClick(s, 1, 1, tea.MouseLeft))
 	s.brush.Glyph = "#"
 	s.brush.Fg, s.brush.Bg = 196, 17
-	s.switchMode(modeRecolor)
+	s.switchMode(modePaint)
 	s.Update(canvasClick(s, 1, 1, tea.MouseLeft))
 	s.Update(canvasDrag(s, 2, 1, tea.MouseLeft))
 	if got := s.canvas.At(1, 1); got != (Cell{Glyph: "@", Fg: 196, Bg: 17}) {
@@ -230,7 +230,7 @@ func TestToolbarKeepsWidth(t *testing.T) {
 func TestTextModePlacesTerminalCursor(t *testing.T) {
 	s := newTestSketch(10, 5)
 	if s.View().Cursor != nil {
-		t.Error("칠하기 모드인데 커서가 보인다")
+		t.Error("브러시 모드인데 커서가 보인다")
 	}
 	s.switchMode(modeText)
 	s.Update(canvasClick(s, 3, 2, tea.MouseLeft))
@@ -259,13 +259,13 @@ func TestTextBackspaceLeavesFollowingText(t *testing.T) {
 	}
 }
 
-// 칠하기 모드에서 글자 키는 붓을 안 바꾼다. 글자표가 떠 있을 때만 바꾸고, 바꾸면 창이 닫힌다.
+// 브러시 모드에서 글자 키는 붓을 안 바꾼다. 글자표가 떠 있을 때만 바꾸고, 바꾸면 창이 닫힌다.
 func TestBrushChangesOnlyInGlyphPopup(t *testing.T) {
 	s := newTestSketch(10, 5)
 	before := s.brush.Glyph
 	s.Update(typed("x"))
 	if s.brush.Glyph != before {
-		t.Errorf("칠하기 모드 글자 키가 붓을 바꿨다: %q", s.brush.Glyph)
+		t.Errorf("브러시 모드 글자 키가 붓을 바꿨다: %q", s.brush.Glyph)
 	}
 	s.Update(typed("v"))
 	s.Update(typed("한"))
@@ -276,11 +276,11 @@ func TestBrushChangesOnlyInGlyphPopup(t *testing.T) {
 
 // 한 글자 키가 도구를 든다. 도구 줄에 적힌 키와 같다.
 func TestToolKeys(t *testing.T) {
-	for key, want := range map[string]mode{"b": modePaint, "t": modeText, "f": modeRecolor, "e": modeErase} {
+	for key, want := range map[string]mode{"b": modeBrush, "t": modeText, "r": modePaint, "e": modeErase} {
 		s := newTestSketch(10, 5)
 		start := modeErase // 키가 고르는 도구와 다른 곳에서 시작한다
 		if key == "e" {
-			start = modePaint
+			start = modeBrush
 		}
 		s.setMode(start)
 		s.Update(typed(key))
@@ -315,7 +315,7 @@ func TestWASDScrolls(t *testing.T) {
 // 글자 모드에서는 도구 키도 입력이다. Esc 가 들어오기 전 모드로 돌아간다.
 func TestTextModeTypesToolKeysAndEscReturns(t *testing.T) {
 	s := newTestSketch(10, 5)
-	s.Update(typed("f"))
+	s.Update(typed("r"))
 	s.Update(typed("t"))
 	s.Update(canvasClick(s, 0, 0, tea.MouseLeft))
 	s.Update(typed("q"))
@@ -323,8 +323,8 @@ func TestTextModeTypesToolKeysAndEscReturns(t *testing.T) {
 		t.Errorf("모드 %s, 칸 %q", s.mode, s.canvas.At(0, 0).Glyph)
 	}
 	s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if s.mode != modeRecolor {
-		t.Errorf("Esc 뒤 모드 = %s, 색칠로 돌아가야 한다", s.mode)
+	if s.mode != modePaint {
+		t.Errorf("Esc 뒤 모드 = %s, 칠하기로 돌아가야 한다", s.mode)
 	}
 }
 
@@ -370,7 +370,7 @@ func TestColorPopupClosesOnOutsideClick(t *testing.T) {
 // q 는 모드를 안 바꾸고 마우스가 짚은 칸을 바로 붓에 담는다. 판 밖이면 띠에 적는다.
 func TestQPicksHoveredCell(t *testing.T) {
 	s := newTestSketch(10, 5)
-	s.setMode(modeRecolor)
+	s.setMode(modePaint)
 	s.canvas.Put(3, 2, Cell{Glyph: "한", Fg: 40, Bg: 17})
 	s.Update(typed("q"))
 	if s.message == "" {
@@ -381,7 +381,7 @@ func TestQPicksHoveredCell(t *testing.T) {
 	if s.brush != (Cell{Glyph: "한", Fg: 40, Bg: 17}) {
 		t.Errorf("붓 = %+v", s.brush)
 	}
-	if s.mode != modeRecolor {
+	if s.mode != modePaint {
 		t.Errorf("모드 = %s, 그대로여야 한다", s.mode)
 	}
 }

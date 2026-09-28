@@ -21,8 +21,8 @@
 - [x] 저장 포맷 변경 (ADR-0003)
 	- `{layers:[{glyphs: ["....","...."], colors: [0xff, 0x12, 0x34, ...]}], size: {width:32, height:32}}`
 - [ ] 하단 status bar 에 전각인지 반각인지 표시
-- [ ] 명령이름 정리
-	- 브러쉬, 글자, 칠하기, 지우기
+- [x] 명령이름 정리
+	- 붓, 글자, 칠하기, 지우기
 - 리팩토링
-	- [ ] mode 를 command pattern 으로 변경
-	- [ ] 모양도 command pattern 으로 변경
+	- [ ] mode 를 전략 pattern 으로 변경
+	- [ ] 모양도 전략 pattern 으로 변경

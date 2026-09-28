@@ -1,13 +1,13 @@
-// 모양이다. 도구(칠하기 · 색칠 · 지우기)가 "무엇을 하나" 라면 모양은 "어디에 하나" 다. 둘을 따로
+// 모양이다. 도구(브러시 · 칠하기 · 지우기)가 "무엇을 하나" 라면 모양은 "어디에 하나" 다. 둘을 따로
 // 고른다. 도구 셋 × 모양 넷이 모드 열둘이 되지 않게 하려는 것이다. (ADR-0001 §4)
 //
 //   - 한 칸씩: 누른 채 지나간 칸마다 도구를 쓴다.
 //   - 직선 · 테두리 · 채움: 누른 곳에서 끌고 가는 동안 모양이 미리 보이고, 버튼을 떼면 판에 적힌다.
 //     우클릭은 끌던 것을 버린다.
 //
-// 칠하기는 붓 글자를 모양을 따라 찍는다. 선 글자(─│┌┐)로 모서리를 맞춰 그리지 않고 만나는 선을 이어
+// 브러시는 붓 글자를 모양을 따라 찍는다. 선 글자(─│┌┐)로 모서리를 맞춰 그리지 않고 만나는 선을 이어
 // 주지도 않는다. 나중에 그린 것이 덮는다. 넓은 붓(한글, 전각 글자)은 가로로 두 칸씩 건너 찍는다. 한
-// 칸씩 찍으면 앞 글자의 반쪽을 덮어 둘 다 깨진다. 색칠 · 지우기는 칸마다 쓴다.
+// 칸씩 찍으면 앞 글자의 반쪽을 덮어 둘 다 깨진다. 칠하기 · 지우기는 칸마다 쓴다.
 
 package sketch
 
@@ -115,9 +115,9 @@ func (canvas *Canvas) clone() *Canvas {
 	return out
 }
 
-// toolStep 은 모양을 따라 가로로 몇 칸씩 건너 쓸지다. 칠하기만 붓 폭이고, 색칠 · 지우기는 칸마다다.
+// toolStep 은 모양을 따라 가로로 몇 칸씩 건너 쓸지다. 브러시만 붓 폭이고, 칠하기 · 지우기는 칸마다다.
 func (s *sketch) toolStep() int {
-	if s.mode == modePaint {
+	if s.mode == modeBrush {
 		return cellWidth(s.brush)
 	}
 	return 1
@@ -126,9 +126,9 @@ func (s *sketch) toolStep() int {
 // apply 는 지금 도구를 canvas 의 한 칸에 쓴다.
 func (s *sketch) apply(canvas *Canvas, x, y int) {
 	switch s.mode {
-	case modePaint:
+	case modeBrush:
 		canvas.Put(x, y, s.brush)
-	case modeRecolor:
+	case modePaint:
 		canvas.Recolor(x, y, s.brush.Fg, s.brush.Bg)
 	case modeErase:
 		canvas.Erase(x, y)

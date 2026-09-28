@@ -28,7 +28,7 @@ var (
 // tool 은 도구 줄의 한 줄이다. 빈 줄(구분)은 label 이 nil 이다.
 //
 // label 이 함수인 것은 붓 · 전경 · 배경 줄이 지금 값을 보여야 해서다. active 는 모드 도구만 쓴다.
-// key 는 오른쪽 끝에 적는 단축키다. 누르는 것은 paintKey 가 받는다. 여기는 보이기만 한다.
+// key 는 오른쪽 끝에 적는 단축키다. 누르는 것은 toolKey 가 받는다. 여기는 보이기만 한다.
 type tool struct {
 	label  func(s *sketch) string
 	key    string
@@ -64,12 +64,12 @@ func fixedLabel(text string) func(*sketch) string { return func(*sketch) string 
 
 // tools 는 도구 줄이다. 목록 차례가 곧 위에서부터의 줄이다.
 var tools = []tool{
-	modeTool(modePaint, "b"),
+	modeTool(modeBrush, "b"),
 	modeTool(modeText, "t"),
-	modeTool(modeRecolor, "f"),
+	modeTool(modePaint, "r"),
 	modeTool(modeErase, "e"),
 	{},
-	// 모양은 Tab 으로 돈다. 눌러서 고를 수도 있다. 칠하기 · 색칠 · 지우기가 함께 쓴다.
+	// 모양은 Tab 으로 돈다. 눌러서 고를 수도 있다. 브러시 · 칠하기 · 지우기가 함께 쓴다.
 	figureTool(figureDot),
 	figureTool(figureLine),
 	figureTool(figureBox),

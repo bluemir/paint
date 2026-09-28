@@ -59,7 +59,7 @@ func TestPaletteSwallowsKeys(t *testing.T) {
 	s.Update(openPalette)
 	s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	s.Update(typed("x"))
-	if s.mode != modePaint || s.brush != brush {
+	if s.mode != modeBrush || s.brush != brush {
 		t.Errorf("모드 %s, 붓 %+v 가 바뀌었다", s.mode, s.brush)
 	}
 	if s.query.Value() != "x" {

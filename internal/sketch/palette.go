@@ -23,9 +23,9 @@ type command struct {
 var commands = []command{
 	{name: "color", desc: "색표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},
 	{name: "glyph", desc: "글자표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupGlyph) }},
-	{name: "paint", desc: "칠하기 모드로", run: func(s *sketch) tea.Cmd { return s.switchMode(modePaint) }},
+	{name: "brush", desc: "브러시 모드로", run: func(s *sketch) tea.Cmd { return s.switchMode(modeBrush) }},
 	{name: "text", desc: "글자 모드로", run: func(s *sketch) tea.Cmd { return s.switchMode(modeText) }},
-	{name: "recolor", desc: "색칠 모드로 (글자는 두고 색만)", run: func(s *sketch) tea.Cmd { return s.switchMode(modeRecolor) }},
+	{name: "paint", desc: "칠하기 모드로 (글자는 두고 색만)", run: func(s *sketch) tea.Cmd { return s.switchMode(modePaint) }},
 	{name: "erase", desc: "지우기 모드로", run: func(s *sketch) tea.Cmd { return s.switchMode(modeErase) }},
 	{name: "dot", desc: "모양: 한 칸씩", run: func(s *sketch) tea.Cmd { return s.switchFigure(figureDot) }},
 	{name: "line", desc: "모양: 직선", run: func(s *sketch) tea.Cmd { return s.switchFigure(figureLine) }},
