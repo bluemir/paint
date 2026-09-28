@@ -34,7 +34,7 @@ type toolbarRow struct {
 	label  func(s *sketch) string
 	key    string
 	active func(s *sketch) bool
-	run    func(s *sketch) tea.Cmd
+	run    func(s *sketch) (tea.Model, tea.Cmd)
 }
 
 func modeRow(m mode) toolbarRow {
@@ -42,9 +42,9 @@ func modeRow(m mode) toolbarRow {
 		label:  func(*sketch) string { return m.String() },
 		key:    m.shortcut(),
 		active: func(s *sketch) bool { return s.mode == m },
-		run: func(s *sketch) tea.Cmd {
+		run: func(s *sketch) (tea.Model, tea.Cmd) {
 			s.setMode(m)
-			return nil
+			return s, nil
 		},
 	}
 }
@@ -54,9 +54,9 @@ func figureRow(f figure) toolbarRow {
 	return toolbarRow{
 		label:  func(*sketch) string { return f.String() },
 		active: func(s *sketch) bool { return s.figure == f },
-		run: func(s *sketch) tea.Cmd {
+		run: func(s *sketch) (tea.Model, tea.Cmd) {
 			s.setFigure(f)
-			return nil
+			return s, nil
 		},
 	}
 }
@@ -85,25 +85,25 @@ func figureRows() []toolbarRow {
 
 // fixedRows 는 도구 줄의 붓 · 색 · 스포이드와 명령 · 저장 · 되돌리기 줄이다.
 var fixedRows = []toolbarRow{
-	{label: func(s *sketch) string { return "붓 " + s.brush.style().Render(s.brush.Glyph) }, key: "v", run: func(s *sketch) tea.Cmd { return s.openPopup(popupGlyph) }},
-	{label: func(s *sketch) string { return "전경 " + swatch(s.brush.Fg) }, key: "c", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},
-	{label: func(s *sketch) string { return "배경 " + swatch(s.brush.Bg) }, key: "c", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},
+	{label: func(s *sketch) string { return "붓 " + s.brush.style().Render(s.brush.Glyph) }, key: "v", run: (*sketch).openGlyphs},
+	{label: func(s *sketch) string { return "전경 " + swatch(s.brush.Fg) }, key: "c", run: (*sketch).openColors},
+	{label: func(s *sketch) string { return "배경 " + swatch(s.brush.Bg) }, key: "c", run: (*sketch).openColors},
 	// 스포이드는 모드가 아니라 키다(pickHovered). 판 위의 칸을 짚고 눌러야 하므로 버튼으로는 할 일이
 	// 없어, 붓 · 색 아래에 그 키를 적어 두기만 한다. 담기는 것이 바로 위의 셋이다.
 	{label: fixedLabel("스포이드"), key: "q"},
 	{},
-	{label: fixedLabel("명령"), key: "^P", run: func(s *sketch) tea.Cmd { return s.openPopup(popupCommand) }},
-	{label: fixedLabel("저장"), key: "^S", run: func(s *sketch) tea.Cmd {
+	{label: fixedLabel("명령"), key: "^P", run: (*sketch).openCommands},
+	{label: fixedLabel("저장"), key: "^S", run: func(s *sketch) (tea.Model, tea.Cmd) {
 		s.save()
-		return nil
+		return s, nil
 	}},
-	{label: fixedLabel("되돌리기"), key: "^Z", run: func(s *sketch) tea.Cmd {
+	{label: fixedLabel("되돌리기"), key: "^Z", run: func(s *sketch) (tea.Model, tea.Cmd) {
 		s.undo()
-		return nil
+		return s, nil
 	}},
-	{label: fixedLabel("다시"), key: "^Y", run: func(s *sketch) tea.Cmd {
+	{label: fixedLabel("다시"), key: "^Y", run: func(s *sketch) (tea.Model, tea.Cmd) {
 		s.redo()
-		return nil
+		return s, nil
 	}},
 }
 
@@ -139,9 +139,9 @@ func (s *sketch) withToolbar(board string) string {
 	return strings.Join(lines, "\n")
 }
 
-func (s *sketch) clickToolbar(mouse tea.Mouse) tea.Cmd {
+func (s *sketch) clickToolbar(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if mouse.Button != tea.MouseLeft || mouse.Y >= len(tools) || tools[mouse.Y].run == nil {
-		return nil
+		return s, nil
 	}
 	return tools[mouse.Y].run(s)
 }

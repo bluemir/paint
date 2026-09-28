@@ -11,21 +11,24 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/bluemir/paint/internal/tui/components"
 )
 
-// command 는 팔레트에 오르는 명령 하나다.
+// command 는 팔레트에 오르는 명령 하나다. run 은 판을 받아 다음 화면을 돌려준다. 대개 판 자신이라
+// 팔레트가 닫히고, 창을 여는 명령은 그 창이다.
 type command struct {
 	name string // 검색어가 맞춰 보는 이름
 	desc string // 목록 오른쪽에 붙는 설명. 검색어가 이것도 훑는다
-	run  func(s *sketch) tea.Cmd
+	run  func(s *sketch) (tea.Model, tea.Cmd)
 }
 
 // commands 는 팔레트의 명령표다. 목록 차례가 곧 화면에 뜨는 차례다. 도구와 모양은 제 목록(modes,
 // figures)에서 가져온다.
 var commands = slices.Concat(
 	[]command{
-		{name: "color", desc: "색표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupColor) }},
-		{name: "glyph", desc: "글자표를 연다", run: func(s *sketch) tea.Cmd { return s.openPopup(popupGlyph) }},
+		{name: "color", desc: "색표를 연다", run: (*sketch).openColors},
+		{name: "glyph", desc: "글자표를 연다", run: (*sketch).openGlyphs},
 	},
 	modeCommands(),
 	figureCommands(),
@@ -35,7 +38,10 @@ var commands = slices.Concat(
 func modeCommands() []command {
 	out := []command{}
 	for _, m := range modes {
-		out = append(out, command{name: m.command(), desc: m.desc(), run: func(s *sketch) tea.Cmd { return s.switchMode(m) }})
+		out = append(out, command{name: m.command(), desc: m.desc(), run: func(s *sketch) (tea.Model, tea.Cmd) {
+			s.setMode(m)
+			return s, nil
+		}})
 	}
 	return out
 }
@@ -43,42 +49,63 @@ func modeCommands() []command {
 func figureCommands() []command {
 	out := []command{}
 	for _, f := range figures {
-		out = append(out, command{name: f.command(), desc: "모양: " + f.String(), run: func(s *sketch) tea.Cmd { return s.switchFigure(f) }})
+		out = append(out, command{name: f.command(), desc: "모양: " + f.String(), run: func(s *sketch) (tea.Model, tea.Cmd) {
+			s.setFigure(f)
+			return s, nil
+		}})
 	}
 	return out
 }
 
 var editCommands = []command{
-	{name: "undo", desc: "되돌린다", run: func(s *sketch) tea.Cmd {
+	{name: "undo", desc: "되돌린다", run: func(s *sketch) (tea.Model, tea.Cmd) {
 		s.undo()
-		return s.openPopup(popupNone)
+		return s, nil
 	}},
-	{name: "redo", desc: "다시 한다", run: func(s *sketch) tea.Cmd {
+	{name: "redo", desc: "다시 한다", run: func(s *sketch) (tea.Model, tea.Cmd) {
 		s.redo()
-		return s.openPopup(popupNone)
+		return s, nil
 	}},
-	{name: "save", desc: "파일에 저장한다", run: func(s *sketch) tea.Cmd {
+	{name: "save", desc: "파일에 저장한다", run: func(s *sketch) (tea.Model, tea.Cmd) {
 		s.save()
-		return s.openPopup(popupNone)
+		return s, nil
 	}},
 }
 
-// switchMode 는 모드를 바꾸고 팔레트를 닫는다.
-func (s *sketch) switchMode(next mode) tea.Cmd {
-	s.setMode(next)
-	return s.openPopup(popupNone)
+// viewCommand 는 팔레트가 떠 있는 화면이다. 떠 있는 동안 키는 전부 검색어로 간다. Tab 이나 글자 키가
+// 판에 닿으면 안 된다. 검색어와 짚은 줄은 이 화면이 갖는다. 열 때마다 새로 세우므로 비어 있다.
+type viewCommand struct {
+	under *sketch
+
+	query  components.Text
+	cursor int
 }
 
-// switchFigure 는 모양을 바꾸고 팔레트를 닫는다.
-func (s *sketch) switchFigure(next figure) tea.Cmd {
-	s.setFigure(next)
-	return s.openPopup(popupNone)
+func (v *viewCommand) Init() tea.Cmd { return nil }
+
+func (v *viewCommand) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg, tea.MouseReleaseMsg:
+		v.under.Update(msg)
+	case tea.KeyPressMsg:
+		return v.key(msg)
+	case tea.MouseClickMsg:
+		return v.click(tea.Mouse(msg))
+	case tea.MouseMotionMsg, tea.MouseWheelMsg:
+		// 팔레트는 마우스 움직임을 쓰지 않는다. 판에도 안 넘긴다.
+	default:
+		// 캐럿 깜빡임이다. 검색어가 안 받으면 캐럿이 멈춘다.
+		return v, v.query.Update(msg)
+	}
+	return v, nil
 }
+
+func (v *viewCommand) View() tea.View { return v.under.frame(v.box()) }
 
 // matches 는 검색어가 걸러 남긴 명령들이다. 검색어가 비었으면 전부다. 이름이 영어라 설명문도
 // 훑어야 한글로 찾힌다.
-func (s *sketch) matches() []command {
-	want := strings.ToLower(strings.TrimSpace(s.query.Value()))
+func (v *viewCommand) matches() []command {
+	want := strings.ToLower(strings.TrimSpace(v.query.Value()))
 	if want == "" {
 		return commands
 	}
@@ -91,48 +118,55 @@ func (s *sketch) matches() []command {
 	return found
 }
 
-func (s *sketch) commandKey(msg tea.KeyPressMsg) tea.Cmd {
-	found := s.matches()
+func (v *viewCommand) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// ctrl+p 는 팔레트를 새로 연다. 판이 받으므로 검색어가 비워진다.
+	if slices.Contains(sketchKeys, msg.String()) {
+		return v.under.keyOver(v, msg)
+	}
+	found := v.matches()
 	switch msg.String() {
+	case "esc":
+		return v.under, nil
 	case "enter":
-		if s.commandCursor < len(found) {
-			return found[s.commandCursor].run(s)
+		if v.cursor < len(found) {
+			return found[v.cursor].run(v.under)
 		}
-		return nil
+		return v, nil
 	case "up", "down":
 		if len(found) == 0 {
-			return nil
+			return v, nil
 		}
 		by := 1
 		if msg.String() == "up" {
 			by = -1
 		}
-		s.commandCursor = ((s.commandCursor+by)%len(found) + len(found)) % len(found)
-		return nil
+		v.cursor = ((v.cursor+by)%len(found) + len(found)) % len(found)
+		return v, nil
 	}
-	cmd := s.query.Update(msg)
+	cmd := v.query.Update(msg)
 	// 목록이 바뀌었으니 커서를 맨 위로 되돌린다. 안 그러면 짚은 줄이 목록 밖이 될 수 있다.
-	s.commandCursor = 0
-	return cmd
+	v.cursor = 0
+	return v, cmd
 }
 
-// clickCommand 는 목록의 줄을 누르면 그 명령을 돌린다. 첫 줄은 검색어라 목록은 둘째 줄부터다.
-func (s *sketch) clickCommand(mouse tea.Mouse) {
+// click 은 목록의 줄을 누르면 그 명령을 돌린다. 첫 줄은 검색어라 목록은 둘째 줄부터다.
+func (v *viewCommand) click(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if mouse.Button != tea.MouseLeft {
-		return
+		return v, nil
 	}
-	_, y := s.insidePopup(s.commandBox(), mouse)
-	found := s.matches()
+	_, y := v.under.insidePopup(v.box(), mouse)
+	found := v.matches()
 	if index := y - 1; index >= 0 && index < len(found) {
-		found[index].run(s)
+		return found[index].run(v.under)
 	}
+	return v, nil
 }
 
-// commandBox 는 팔레트 상자다. 명령이 몇 개 없어 화면보다 길어질 일이 없으므로 굴리지 않는다.
-func (s *sketch) commandBox() string {
+// box 는 팔레트 상자다. 명령이 몇 개 없어 화면보다 길어질 일이 없으므로 굴리지 않는다.
+func (v *viewCommand) box() string {
 	const marker = "> "
 	const nothing = "  맞는 명령이 없다"
-	found := s.matches()
+	found := v.matches()
 
 	// 폭은 걸러지기 전 목록 전체로 잰다. 치는 동안 상자가 좁아졌다 넓어지면 눈이 따라가야 한다.
 	labels, tails := lipgloss.Width(nothing), 0
@@ -140,15 +174,15 @@ func (s *sketch) commandBox() string {
 		labels = max(labels, lipgloss.Width(marker+cmd.name))
 		tails = max(tails, lipgloss.Width(cmd.desc))
 	}
-	inner := max(labels+2+tails, lipgloss.Width(s.query.String()))
+	inner := max(labels+2+tails, lipgloss.Width(v.query.String()))
 
-	lines := []string{s.query.String()}
+	lines := []string{v.query.String()}
 	if len(found) == 0 {
 		lines = append(lines, dimStyle.Render(nothing))
 	}
 	for i, cmd := range found {
 		prefix := "  "
-		if i == s.commandCursor {
+		if i == v.cursor {
 			prefix = marker
 		}
 		left := prefix + cmd.name

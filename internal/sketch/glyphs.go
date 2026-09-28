@@ -20,6 +20,8 @@ import (
 	"github.com/rivo/uniseg"
 	"golang.org/x/text/unicode/runenames"
 	"golang.org/x/text/width"
+
+	"github.com/bluemir/paint/internal/tui/components"
 )
 
 const (
@@ -188,29 +190,6 @@ type glyphRow struct {
 	glyphs []string
 }
 
-// glyphRows 는 글자표의 줄이다. 검색어가 있으면 맞는 글자만 남기고, 남은 것이 없는 묶음은 뺀다.
-func (s *sketch) glyphRows() []glyphRow {
-	query := s.glyphQuery.Value()
-	rows := []glyphRow{}
-	for _, group := range glyphGroups() {
-		found := []string{}
-		for _, glyph := range group.glyphs {
-			if glyphMatches(group.title, glyph, query) {
-				found = append(found, glyph)
-			}
-		}
-		if len(found) == 0 {
-			continue
-		}
-		rows = append(rows, glyphRow{title: group.title})
-		columns := s.glyphColumns()
-		for start := 0; start < len(found); start += columns {
-			rows = append(rows, glyphRow{glyphs: found[start:min(start+columns, len(found))]})
-		}
-	}
-	return rows
-}
-
 // glyphMatches 는 글자가 검색어에 걸리는지다. 검색어를 빈칸으로 끊은 말이 전부 들어 있어야 한다.
 //
 // 보는 말은 넷이다. 묶음 이름(`선`, `이모지`), zn 에서 옮긴 한국어 이름과 찾는 말(`세모`), 유니코드
@@ -233,124 +212,216 @@ func glyphMatches(title, glyph, query string) bool {
 	return true
 }
 
-// glyphRowsShown 은 글자표가 한 번에 보이는 줄 수다. 창 전체(테두리 둘과 안내 · 검색 두 줄 포함)가
-// 터미널 높이의 60% 다. 글자가 오천 자를 넘어 어차피 굴려야 하므로, 화면을 다 덮어 판을 가리는 것보다
-// 낫다. 띠까지 친 터미널 높이로 재지만 60% 라 띠를 가리지는 않는다.
-func (s *sketch) glyphRowsShown() int { return max(s.height*6/10-4, 1) }
+// viewGlyph 는 글자표가 떠 있는 화면이다. 글자를 누르거나 글자 키를 치면 그 글자가 붓이 되고 창이
+// 닫힌다. 창 바깥을 누르거나 Esc 를 누르면 닫힌다.
+//
+// 굴린 곳 · 검색어 · 마우스가 올라간 칸은 이 화면이 갖는다. 열 때마다 새로 세우므로 검색어는 비어 있고,
+// 굴린 곳은 지금 붓 글자가 있는 줄이다(newViewGlyph).
+type viewGlyph struct {
+	under *sketch
 
-// glyphColumns 는 글자표 한 줄의 글자 수다. 창 전체(테두리 포함)가 터미널 폭의 80% 를 넘지 않게
-// 칸 폭(glyphCellWidth) 단위로 내림한다. 좁은 터미널에서도 minGlyphColumns 아래로는 안 줄인다.
-// 그보다 좁으면 창이 80% 를 넘는다. 안내 줄(glyphTitle)이 그 폭에 맞춰져 있다.
-func (s *sketch) glyphColumns() int {
-	return max((s.width*8/10-2)/glyphCellWidth, minGlyphColumns)
+	// top 은 걸러진 목록(rows)을 몇 줄 내려 보는지다.
+	top int
+	// query 는 검색어다. searching 은 검색 줄에 손이 가 있는지다. 가 있는 동안은 글자 키가 붓이 아니라
+	// 검색어로 간다.
+	query     components.Text
+	searching bool
+	// hoverRow 와 hoverColumn 은 마우스가 올라간 칸이다(at). 없으면 -1.
+	hoverRow, hoverColumn int
 }
 
-func (s *sketch) scrollGlyphsBy(by int) {
-	s.glyphTop = min(max(s.glyphTop+by, 0), max(len(s.glyphRows())-s.glyphRowsShown(), 0))
-}
-
-func (s *sketch) scrollGlyphs(mouse tea.Mouse) {
-	switch mouse.Button {
-	case tea.MouseWheelUp:
-		s.scrollGlyphsBy(-3)
-	case tea.MouseWheelDown:
-		s.scrollGlyphsBy(3)
+// newViewGlyph 는 글자표를 연다. 지금 붓 글자가 있는 줄을 맨 위에 두고 연다. 방금 쓰던 글자 근처에서
+// 다음 글자를 고르는 일이 잦다. 표에 없는 글자(키로 친 한글 등)면 맨 위다.
+func newViewGlyph(under *sketch) *viewGlyph {
+	v := &viewGlyph{under: under, query: components.NewText(""), hoverRow: -1, hoverColumn: -1}
+	v.query.Blur() // 검색 줄을 누를 때까지는 글자 키가 붓이다
+	for i, row := range v.rows() {
+		if slices.Contains(row.glyphs, under.brush.Glyph) {
+			v.top = i
+			break
+		}
 	}
+	v.scrollBy(0)
+	return v
 }
 
-// scrollGlyphKey 는 글자표를 굴리는 키다. 검색 중이든 아니든 같다. 굴리는 키였으면 true 다.
-func (s *sketch) scrollGlyphKey(msg tea.KeyPressMsg) bool {
-	switch msg.String() {
-	case "up":
-		s.scrollGlyphsBy(-1)
-	case "down":
-		s.scrollGlyphsBy(1)
-	case "pgup":
-		s.scrollGlyphsBy(-s.glyphRowsShown())
-	case "pgdown":
-		s.scrollGlyphsBy(s.glyphRowsShown())
+func (v *viewGlyph) Init() tea.Cmd { return nil }
+
+func (v *viewGlyph) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg, tea.MouseReleaseMsg:
+		v.under.Update(msg)
+	case tea.KeyPressMsg:
+		return v.key(msg)
+	case tea.MouseClickMsg:
+		return v.pick(tea.Mouse(msg))
+	case tea.MouseMotionMsg:
+		v.hover(tea.Mouse(msg))
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			v.scrollBy(-3)
+		case tea.MouseWheelDown:
+			v.scrollBy(3)
+		}
+		// 굴려서 마우스 밑의 글자가 바뀌었다.
+		v.hover(tea.Mouse(msg))
 	default:
-		return false
+		// 캐럿 깜빡임이다. 검색어가 안 받으면 캐럿이 멈춘다.
+		if v.searching {
+			return v, v.query.Update(msg)
+		}
 	}
-	return true
+	return v, nil
 }
 
-// glyphKey 는 글자표가 떠 있고 검색 중이 아닐 때의 키다. 방향키가 표를 굴리고, 글자 키는 그 글자를
-// 붓으로 삼고 창을 닫는다. 표에 없는 글자(한글, 영문 등)는 이 길로 고른다.
-func (s *sketch) glyphKey(msg tea.KeyPressMsg) {
-	if s.scrollGlyphKey(msg) {
-		return
+func (v *viewGlyph) View() tea.View { return v.under.frame(v.box()) }
+
+// key 는 글자표의 키다.
+//
+//   - Tab 은 검색 줄에 손을 대고 뗀다. 모양을 돌리지 않는다. 검색 줄을 누르러 마우스를 옮기지 않아도 된다.
+//   - Esc 는 검색 중이면 검색에서 손만 떼고, 아니면 창을 닫는다.
+//   - 방향키 · PgUp · PgDn 은 검색 중이든 아니든 표를 굴린다.
+//   - 검색 중이면 글자 키는 검색어로 가고 Enter 는 걸러진 첫 글자를 붓으로 삼는다.
+//   - 검색 중이 아니면 글자 키가 그 글자를 붓으로 삼는다. 표에 없는 글자(한글, 영문 등)는 이 길로 고른다.
+func (v *viewGlyph) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if slices.Contains(sketchKeys, msg.String()) {
+		return v.under.keyOver(v, msg)
+	}
+	switch msg.String() {
+	case "tab":
+		if v.searching {
+			v.stopSearch()
+			return v, nil
+		}
+		return v, v.startSearch()
+	case "esc":
+		if v.searching {
+			v.stopSearch()
+			return v, nil
+		}
+		return v.under, nil
+	case "up":
+		v.scrollBy(-1)
+		return v, nil
+	case "down":
+		v.scrollBy(1)
+		return v, nil
+	case "pgup":
+		v.scrollBy(-v.rowsShown())
+		return v, nil
+	case "pgdown":
+		v.scrollBy(v.rowsShown())
+		return v, nil
+	}
+	if v.searching {
+		return v.searchKey(msg)
 	}
 	if glyph := typedGlyph(msg); glyph != "" {
-		s.brush.Glyph = glyph
-		s.openPopup(popupNone)
+		v.under.brush.Glyph = glyph
+		return v.under, nil
 	}
+	return v, nil
 }
 
-// glyphSearchKey 는 검색 줄에 손이 가 있을 때의 키다. 글자 키는 전부 검색어로 가고, Enter 는 걸러진
-// 첫 글자를 붓으로 삼는다. Esc 는 검색에서 손을 뗀다(key 가 받는다).
-func (s *sketch) glyphSearchKey(msg tea.KeyPressMsg) tea.Cmd {
-	if s.scrollGlyphKey(msg) {
-		return nil
-	}
+// searchKey 는 검색 줄에 손이 가 있을 때의 키다.
+func (v *viewGlyph) searchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "enter" {
-		for _, row := range s.glyphRows() {
+		for _, row := range v.rows() {
 			if len(row.glyphs) > 0 {
-				s.brush.Glyph = row.glyphs[0]
-				s.openPopup(popupNone)
-				return nil
+				v.under.brush.Glyph = row.glyphs[0]
+				return v.under, nil
 			}
 		}
-		return nil
+		return v, nil
 	}
-	cmd := s.glyphQuery.Update(msg)
+	cmd := v.query.Update(msg)
 	// 목록이 바뀌었으니 맨 위부터 보인다. 안 그러면 내려 본 곳이 걸러진 목록 밖이 된다. 마우스가 올라간
 	// 칸도 다른 글자가 되었으므로 지운다. 다음 움직임이 다시 잰다.
-	s.glyphTop = 0
-	s.glyphHoverRow, s.glyphHoverColumn = -1, -1
-	return cmd
+	v.top = 0
+	v.hoverRow, v.hoverColumn = -1, -1
+	return v, cmd
 }
 
-// startGlyphSearch 와 stopGlyphSearch 는 검색 줄에 손을 대고 뗀다. 검색어는 남는다.
-func (s *sketch) startGlyphSearch() tea.Cmd {
-	s.glyphSearching = true
-	return s.glyphQuery.Focus()
+// startSearch 와 stopSearch 는 검색 줄에 손을 대고 뗀다. 검색어는 남는다.
+func (v *viewGlyph) startSearch() tea.Cmd {
+	v.searching = true
+	return v.query.Focus()
 }
 
-func (s *sketch) stopGlyphSearch() {
-	s.glyphSearching = false
-	s.glyphQuery.Blur()
+func (v *viewGlyph) stopSearch() {
+	v.searching = false
+	v.query.Blur()
 }
 
-// glyphSearchLine 은 안내 아래 검색 줄이다. 누르면 검색이 시작된다.
-func (s *sketch) glyphSearchLine() string {
+// rows 는 글자표의 줄이다. 검색어가 있으면 맞는 글자만 남기고, 남은 것이 없는 묶음은 뺀다.
+func (v *viewGlyph) rows() []glyphRow {
+	query := v.query.Value()
+	columns := v.columns()
+	rows := []glyphRow{}
+	for _, group := range glyphGroups() {
+		found := []string{}
+		for _, glyph := range group.glyphs {
+			if glyphMatches(group.title, glyph, query) {
+				found = append(found, glyph)
+			}
+		}
+		if len(found) == 0 {
+			continue
+		}
+		rows = append(rows, glyphRow{title: group.title})
+		for start := 0; start < len(found); start += columns {
+			rows = append(rows, glyphRow{glyphs: found[start:min(start+columns, len(found))]})
+		}
+	}
+	return rows
+}
+
+// rowsShown 은 글자표가 한 번에 보이는 줄 수다. 창 전체(테두리 둘과 안내 · 검색 두 줄 포함)가 터미널
+// 높이의 60% 다. 글자가 오천 자를 넘어 어차피 굴려야 하므로, 화면을 다 덮어 판을 가리는 것보다 낫다.
+// 띠까지 친 터미널 높이로 재지만 60% 라 띠를 가리지는 않는다.
+func (v *viewGlyph) rowsShown() int { return max(v.under.height*6/10-4, 1) }
+
+// columns 는 글자표 한 줄의 글자 수다. 창 전체(테두리 포함)가 터미널 폭의 80% 를 넘지 않게 칸
+// 폭(glyphCellWidth) 단위로 내림한다. 좁은 터미널에서도 minGlyphColumns 아래로는 안 줄인다. 그보다
+// 좁으면 창이 80% 를 넘는다. 안내 줄(glyphTitle)이 그 폭에 맞춰져 있다.
+func (v *viewGlyph) columns() int {
+	return max((v.under.width*8/10-2)/glyphCellWidth, minGlyphColumns)
+}
+
+func (v *viewGlyph) scrollBy(by int) {
+	v.top = min(max(v.top+by, 0), max(len(v.rows())-v.rowsShown(), 0))
+}
+
+// searchLine 은 안내 아래 검색 줄이다. 누르면 검색이 시작된다.
+func (v *viewGlyph) searchLine() string {
 	switch {
-	case s.glyphSearching:
-		return s.glyphQuery.String()
-	case s.glyphQuery.Value() == "":
+	case v.searching:
+		return v.query.String()
+	case v.query.Value() == "":
 		return dimStyle.Render("찾기: 여기를 누르거나 Tab (한국어 · 영문 이름, 묶음)")
 	}
-	return "찾기: " + s.glyphQuery.Value()
+	return "찾기: " + v.query.Value()
 }
 
-// glyphBoxSize 는 glyphBox 의 바깥 폭과 높이다. 창을 그리지 않고 잰다. 폭은 한 줄의 칸과 테두리 둘,
-// 높이는 안내 · 검색 두 줄과 목록 줄과 테두리 둘이다. glyphBox 가 빈 줄로 채워 이 크기를 지킨다.
-func (s *sketch) glyphBoxSize() (width, height int) {
-	return s.glyphColumns()*glyphCellWidth + 2, glyphListTop + s.glyphRowsShown() + 2
+// boxSize 는 box 의 바깥 폭과 높이다. 창을 그리지 않고 잰다. 폭은 한 줄의 칸과 테두리 둘, 높이는
+// 안내 · 검색 두 줄과 목록 줄과 테두리 둘이다. box 가 빈 줄로 채워 이 크기를 지킨다.
+func (v *viewGlyph) boxSize() (width, height int) {
+	return v.columns()*glyphCellWidth + 2, glyphListTop + v.rowsShown() + 2
 }
 
-// glyphBox 는 글자표 창이다. 굴리거나 걸러도 창 폭과 높이가 안 바뀌게 빈 줄로 채운다.
-func (s *sketch) glyphBox() string {
-	s.scrollGlyphsBy(0) // 창 높이가 줄었거나 걸러져 줄이 줄었으면 내려 본 곳을 당긴다
-	rows := s.glyphRows()
-	inner := s.glyphColumns() * glyphCellWidth
-	lines := []string{glyphTitle, ansi.Truncate(s.glyphSearchLine(), inner, "…")}
+// box 는 글자표 창이다. 굴리거나 걸러도 창 폭과 높이가 안 바뀌게 빈 줄로 채운다.
+func (v *viewGlyph) box() string {
+	v.scrollBy(0) // 창 높이가 줄었거나 걸러져 줄이 줄었으면 내려 본 곳을 당긴다
+	rows := v.rows()
+	inner := v.columns() * glyphCellWidth
+	lines := []string{glyphTitle, ansi.Truncate(v.searchLine(), inner, "…")}
 	if len(rows) == 0 {
 		lines = append(lines, dimStyle.Render("  맞는 글자가 없다"))
 	}
-	for i := s.glyphTop; i < s.glyphTop+s.glyphRowsShown(); i++ {
+	for i := v.top; i < v.top+v.rowsShown(); i++ {
 		if i >= len(rows) {
-			if len(rows) > 0 || i > s.glyphTop {
+			if len(rows) > 0 || i > v.top {
 				lines = append(lines, "")
 			}
 			continue
@@ -363,7 +434,7 @@ func (s *sketch) glyphBox() string {
 		for column, glyph := range rows[i].glyphs {
 			pad := strings.Repeat(" ", glyphCellWidth-ansi.StringWidth(glyph))
 			switch _, blank := blankNames[glyph]; {
-			case i == s.glyphHoverRow && column == s.glyphHoverColumn:
+			case i == v.hoverRow && column == v.hoverColumn:
 				// 글자 폭만 칠한다. 뒤의 빈칸까지 칠하면 칸이 한쪽으로 쏠려 보인다.
 				line.WriteString(glyphHoverStyle.Render(glyph) + pad)
 			case blank:
@@ -383,51 +454,49 @@ func (s *sketch) glyphBox() string {
 // 바탕(blankSwatch, 238)보다 밝아야 빈칸 위에 올라가도 구별된다.
 var glyphHoverStyle = lipgloss.NewStyle().Background(lipgloss.ANSIColor(244))
 
-// glyphAt 은 화면 칸 아래의 글자표 칸이다. 줄은 걸러진 목록(glyphRows)의 번호이고 칸은 그 줄 안의
-// 번호다. 글자 칸이 아니면(제목 · 검색 줄, 묶음 제목, 빈 곳, 창 밖) ok 가 false 다.
+// at 은 화면 칸 아래의 글자표 칸이다. 줄은 걸러진 목록(rows)의 번호이고 칸은 그 줄 안의 번호다. 글자
+// 칸이 아니면(제목 · 검색 줄, 묶음 제목, 빈 곳, 창 밖) ok 가 false 다.
 //
-// 창을 그리지 않고 크기(glyphBoxSize)로 자리를 잰다. 휠 · 마우스 움직임마다 불리는데, 창을 그려 재면
-// 화면을 그릴 때와 합쳐 한 번에 두 번 그리게 된다.
-func (s *sketch) glyphAt(mouse tea.Mouse) (row, column int, ok bool) {
-	s.scrollGlyphsBy(0) // glyphBox 가 그리기 전에 하는 것과 같다. 줄이 줄었으면 내려 본 곳을 당긴다
-	rows := s.glyphRows()
-	originX, originY := s.centerOrigin(s.glyphBoxSize())
+// 창을 그리지 않고 크기(boxSize)로 자리를 잰다. 휠 · 마우스 움직임마다 불리는데, 창을 그려 재면 화면을
+// 그릴 때와 합쳐 한 번에 두 번 그리게 된다.
+func (v *viewGlyph) at(mouse tea.Mouse) (row, column int, ok bool) {
+	v.scrollBy(0) // box 가 그리기 전에 하는 것과 같다. 줄이 줄었으면 내려 본 곳을 당긴다
+	rows := v.rows()
+	originX, originY := v.under.centerOrigin(v.boxSize())
 	x, y := mouse.X-originX-1, mouse.Y-originY-1
-	row, column = s.glyphTop+y-glyphListTop, x/glyphCellWidth
-	if y < glyphListTop || y >= glyphListTop+s.glyphRowsShown() || x < 0 || row >= len(rows) || column >= len(rows[row].glyphs) {
+	row, column = v.top+y-glyphListTop, x/glyphCellWidth
+	if y < glyphListTop || y >= glyphListTop+v.rowsShown() || x < 0 || row >= len(rows) || column >= len(rows[row].glyphs) {
 		return 0, 0, false
 	}
 	return row, column, true
 }
 
-// hoverGlyph 는 마우스 아래의 글자표 칸을 적어 둔다. 움직일 때와 굴릴 때(칸 밑의 글자가 바뀐다) 부른다.
-func (s *sketch) hoverGlyph(mouse tea.Mouse) {
-	s.glyphHoverRow, s.glyphHoverColumn = -1, -1
-	if row, column, ok := s.glyphAt(mouse); ok {
-		s.glyphHoverRow, s.glyphHoverColumn = row, column
+// hover 는 마우스 아래의 글자표 칸을 적어 둔다. 움직일 때와 굴릴 때(칸 밑의 글자가 바뀐다) 부른다.
+func (v *viewGlyph) hover(mouse tea.Mouse) {
+	v.hoverRow, v.hoverColumn = -1, -1
+	if row, column, ok := v.at(mouse); ok {
+		v.hoverRow, v.hoverColumn = row, column
 	}
 }
 
 // glyphListTop 은 창 안쪽에서 글자 목록이 시작하는 줄이다. 안내와 검색 줄 아래다.
 const glyphListTop = 2
 
-// pickGlyph 는 글자표의 누름이다. 검색 줄을 누르면 검색이 시작되고, 글자를 누르면 붓이 된다. 창 바깥을
-// 누르면 닫힌다.
-func (s *sketch) pickGlyph(mouse tea.Mouse) tea.Cmd {
-	// 창 바깥을 누르면 닫는다. 그 누름은 판에 닿지 않는다. 색표와 같다.
-	box := s.glyphBox()
-	if s.outsidePopup(box, mouse) {
-		s.openPopup(popupNone)
-		return nil
+// pick 은 글자표의 누름이다. 검색 줄을 누르면 검색이 시작되고, 글자를 누르면 붓이 된다. 창 바깥을
+// 누르면 닫힌다. 그 누름은 판에 닿지 않는다. 색표와 같다.
+func (v *viewGlyph) pick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
+	box := v.box()
+	if v.under.outsidePopup(box, mouse) {
+		return v.under, nil
 	}
-	if _, y := s.insidePopup(box, mouse); y == glyphListTop-1 {
-		return s.startGlyphSearch()
+	if _, y := v.under.insidePopup(box, mouse); y == glyphListTop-1 {
+		return v, v.startSearch()
 	}
-	if row, column, ok := s.glyphAt(mouse); ok {
-		s.brush.Glyph = s.glyphRows()[row].glyphs[column]
-		s.openPopup(popupNone)
+	if row, column, ok := v.at(mouse); ok {
+		v.under.brush.Glyph = v.rows()[row].glyphs[column]
+		return v.under, nil
 	}
-	return nil
+	return v, nil
 }
 
 // zn(~/src/bluemir/zn) 의 특수문자 표(internal/assets/symbols.go 의 CuratedSymbols)에서 가져온 글자다.

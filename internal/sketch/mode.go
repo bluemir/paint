@@ -26,8 +26,9 @@ type mode interface {
 	// press 와 move 는 판 위의 누름과, 누른 채 움직인 것이다. 판 칸 (x, y) 를 받는다.
 	press(s *sketch, button tea.MouseButton, x, y int)
 	move(s *sketch, button tea.MouseButton, x, y int)
-	// keyPress 는 창이 없을 때의 키다. Tab · ctrl 키 · 창을 닫는 Esc 는 여기 오기 전에 받는다.
-	keyPress(s *sketch, msg tea.KeyPressMsg) tea.Cmd
+	// keyPress 는 창이 없을 때의 키다. Tab 과 ctrl 키는 여기 오기 전에 받는다. 돌려주는 모델이 다음
+	// 화면이다(창을 여는 키).
+	keyPress(s *sketch, msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	// cursor 는 터미널의 진짜 커서를 둘 곳이다. 없으면 nil 이다.
 	cursor(s *sketch) *tea.Cursor
 
@@ -74,7 +75,9 @@ func (figureMode) move(s *sketch, button tea.MouseButton, x, y int) {
 	s.figure.move(s, button, x, y)
 }
 
-func (figureMode) keyPress(s *sketch, msg tea.KeyPressMsg) tea.Cmd { return s.toolKey(msg) }
+func (figureMode) keyPress(s *sketch, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	return s.toolKey(msg)
+}
 
 func (figureMode) cursor(*sketch) *tea.Cursor { return nil }
 
@@ -122,15 +125,15 @@ func (textMode) press(s *sketch, _ tea.MouseButton, x, y int) {
 func (textMode) move(*sketch, tea.MouseButton, int, int) {}
 
 // keyPress 는 키 하나가 되돌리기 한 번이다.
-func (textMode) keyPress(s *sketch, msg tea.KeyPressMsg) tea.Cmd {
+func (textMode) keyPress(s *sketch, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" {
 		s.setMode(s.previousMode)
-		return nil
+		return s, nil
 	}
 	s.beginEdit()
 	s.textKey(msg)
 	s.endEdit()
-	return nil
+	return s, nil
 }
 
 // cursor 는 칸을 뒤집어 그리지 않고 터미널의 진짜 커서를 적힐 칸에 둔다.

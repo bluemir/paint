@@ -1,6 +1,7 @@
 package sketch
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,6 +14,17 @@ func newTestSketch(width, height int) *sketch {
 	s := newSketch("unused.json", NewCanvas(width, height))
 	s.Update(tea.WindowSizeMsg{Width: width + s.originX(), Height: height + 2})
 	return s
+}
+
+// typeName 은 화면의 타입 이름이다. 지금 뜬 창이 무엇인지 적는 데 쓴다.
+func typeName(model tea.Model) string { return fmt.Sprintf("%T", model) }
+
+// send 는 msgs 를 차례로 보내고 마지막에 선 화면을 돌려준다. 창이 뜨고 닫히는 대로 받는 화면이 바뀐다.
+func send(model tea.Model, msgs ...tea.Msg) tea.Model {
+	for _, msg := range msgs {
+		model, _ = model.Update(msg)
+	}
+	return model
 }
 
 // canvasClick 과 canvasDrag 는 판 칸 (x, y) 를 짚는 마우스다. 굴린 만큼과 눈금 여백만큼 화면 칸을 옮긴다.
@@ -97,11 +109,14 @@ func TestTextModeTypesAndBacksUp(t *testing.T) {
 
 func TestColorPopupPicksForegroundAndBackground(t *testing.T) {
 	s := newTestSketch(60, 30)
-	s.Update(typed("c"))
 	originX, originY := s.popupOrigin(colorBox())
 	// 테두리 한 칸, 제목 한 줄 아래가 격자다. 둘째 줄 셋째 칸이 16+2 = 18 번이다.
-	s.Update(tea.MouseClickMsg{X: originX + 1 + 2*swatchWidth, Y: originY + 1 + 2, Button: tea.MouseLeft})
-	s.Update(tea.MouseClickMsg{X: originX + 1, Y: originY + 1 + colorRows + 1, Button: tea.MouseRight})
+	next := send(s, typed("c"),
+		tea.MouseClickMsg{X: originX + 1 + 2*swatchWidth, Y: originY + 1 + 2, Button: tea.MouseLeft},
+		tea.MouseClickMsg{X: originX + 1, Y: originY + 1 + colorRows + 1, Button: tea.MouseRight})
+	if _, ok := next.(*viewColor); !ok {
+		t.Errorf("색을 고른 뒤 화면 = %T, 색표가 떠 있어야 한다", next)
+	}
 	if s.brush.Fg != 18 || s.brush.Bg != NoColor {
 		t.Errorf("전경 %d 배경 %d", s.brush.Fg, s.brush.Bg)
 	}
@@ -200,7 +215,7 @@ func TestPaintModeChangesOnlyColor(t *testing.T) {
 	s.Update(canvasClick(s, 1, 1, tea.MouseLeft))
 	s.brush.Glyph = "#"
 	s.brush.Fg, s.brush.Bg = 196, 17
-	s.switchMode(modePaint)
+	s.setMode(modePaint)
 	s.Update(canvasClick(s, 1, 1, tea.MouseLeft))
 	s.Update(canvasDrag(s, 2, 1, tea.MouseLeft))
 	if got := s.canvas.At(1, 1); got != (Cell{Glyph: "@", Fg: 196, Bg: 17}) {
@@ -232,14 +247,15 @@ func TestTextModePlacesTerminalCursor(t *testing.T) {
 	if s.View().Cursor != nil {
 		t.Error("브러시 모드인데 커서가 보인다")
 	}
-	s.switchMode(modeText)
+	s.setMode(modeText)
 	s.Update(canvasClick(s, 3, 2, tea.MouseLeft))
 	cursor := s.View().Cursor
 	if cursor == nil || cursor.X != 3+s.originX() || cursor.Y != 2+1 {
 		t.Errorf("커서 = %+v", cursor)
 	}
-	s.openPopup(popupColor)
-	if s.View().Cursor != nil {
+	// 글자 모드에서는 c 가 글자라 색표를 바로 연다. 띠의 색을 눌러 여는 것과 같다.
+	colors, _ := s.openColors()
+	if colors.View().Cursor != nil {
 		t.Error("색표가 떴는데 커서가 보인다")
 	}
 }
@@ -247,7 +263,7 @@ func TestTextModePlacesTerminalCursor(t *testing.T) {
 // 글자 모드 Backspace 는 왼쪽 칸을 지우고 물러설 뿐 뒤 글자를 당기지 않는다.
 func TestTextBackspaceLeavesFollowingText(t *testing.T) {
 	s := newTestSketch(10, 3)
-	s.switchMode(modeText)
+	s.setMode(modeText)
 	s.Update(canvasClick(s, 0, 0, tea.MouseLeft))
 	for _, r := range "abc" {
 		s.Update(typed(string(r)))
@@ -267,10 +283,8 @@ func TestBrushChangesOnlyInGlyphPopup(t *testing.T) {
 	if s.brush.Glyph != before {
 		t.Errorf("브러시 모드 글자 키가 붓을 바꿨다: %q", s.brush.Glyph)
 	}
-	s.Update(typed("v"))
-	s.Update(typed("한"))
-	if s.brush.Glyph != "한" || s.popup != popupNone {
-		t.Errorf("붓 %q, 창 %d", s.brush.Glyph, s.popup)
+	if next := send(s, typed("v"), typed("한")); s.brush.Glyph != "한" || next != tea.Model(s) {
+		t.Errorf("붓 %q, 화면 %T", s.brush.Glyph, next)
 	}
 }
 
@@ -288,11 +302,9 @@ func TestToolKeys(t *testing.T) {
 			t.Errorf("%s: 모드 = %s, %s 여야 한다", key, s.mode, want)
 		}
 	}
-	for key, want := range map[string]popup{"c": popupColor, "v": popupGlyph} {
-		s := newTestSketch(10, 5)
-		s.Update(typed(key))
-		if s.popup != want {
-			t.Errorf("%s: 창 = %d, %d 여야 한다", key, s.popup, want)
+	for key, want := range map[string]string{"c": "*sketch.viewColor", "v": "*sketch.viewGlyph"} {
+		if got := typeName(send(newTestSketch(10, 5), typed(key))); got != want {
+			t.Errorf("%s: 화면 = %s, %s 여야 한다", key, got, want)
 		}
 	}
 }
@@ -352,14 +364,12 @@ func TestIMEWarningOnStrip(t *testing.T) {
 // 색표 바깥을 누르면 창이 닫히고 판에는 안 칠한다. 창 안(테두리 포함)을 누르면 떠 있다.
 func TestColorPopupClosesOnOutsideClick(t *testing.T) {
 	s := newTestSketch(60, 30)
-	s.Update(typed("c"))
+	popup := send(s, typed("c"))
 	originX, originY := s.popupOrigin(colorBox())
-	s.Update(tea.MouseClickMsg{X: originX, Y: originY, Button: tea.MouseLeft}) // 테두리 모서리
-	if s.popup != popupColor {
+	if next := send(popup, tea.MouseClickMsg{X: originX, Y: originY, Button: tea.MouseLeft}); next != popup { // 테두리 모서리
 		t.Fatal("테두리를 눌렀는데 창이 닫혔다")
 	}
-	s.Update(tea.MouseClickMsg{X: originX - 1, Y: originY + 3, Button: tea.MouseLeft})
-	if s.popup != popupNone {
+	if next := send(popup, tea.MouseClickMsg{X: originX - 1, Y: originY + 3, Button: tea.MouseLeft}); next != tea.Model(s) {
 		t.Error("바깥을 눌렀는데 창이 떠 있다")
 	}
 	if s.dirty {
@@ -391,23 +401,17 @@ func TestStripColorOpensColorPopup(t *testing.T) {
 	s := newTestSketch(80, 5)
 	line := ansi.Strip(s.strip())
 	for _, label := range []string{"전경", "배경"} {
-		s.openPopup(popupNone)
 		x := ansi.StringWidth(line[:strings.Index(line, label)]) + 1
-		s.Update(tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft})
-		if s.popup != popupColor {
-			t.Errorf("%s 을 눌렀는데 창 = %d", label, s.popup)
+		if next := send(s, tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft}); typeName(next) != "*sketch.viewColor" {
+			t.Errorf("%s 을 눌렀는데 화면 = %T", label, next)
 		}
 	}
-	s.openPopup(popupNone)
-	s.Update(tea.MouseClickMsg{X: 0, Y: s.height - 1, Button: tea.MouseLeft})
-	if s.popup != popupGlyph {
-		t.Errorf("붓 토막을 눌렀는데 창 = %d", s.popup)
+	if next := send(s, tea.MouseClickMsg{X: 0, Y: s.height - 1, Button: tea.MouseLeft}); typeName(next) != "*sketch.viewGlyph" {
+		t.Errorf("붓 토막을 눌렀는데 화면 = %T", next)
 	}
-	s.openPopup(popupNone)
 	x := ansi.StringWidth(line[:strings.Index(line, s.mode.String())]) + 1
-	s.Update(tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft})
-	if s.popup != popupNone {
-		t.Errorf("모드 토막을 눌렀는데 창 = %d", s.popup)
+	if next := send(s, tea.MouseClickMsg{X: x, Y: s.height - 1, Button: tea.MouseLeft}); next != tea.Model(s) {
+		t.Errorf("모드 토막을 눌렀는데 화면 = %T", next)
 	}
 }
 
