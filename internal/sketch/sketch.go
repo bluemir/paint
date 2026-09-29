@@ -54,8 +54,7 @@ type sketch struct {
 
 	hoverX, hoverY int // 마우스가 짚은 판 위의 칸. 판 밖이면 -1.
 
-	dirty     bool
-	quitAsked bool // 저장 안 한 채 ctrl+c 를 한 번 눌렀다
+	dirty bool
 	// imeOn 은 도구 키가 입력기를 거쳐 조합 글자로 왔는지다. 띠에 안내를 띄운다. 라틴 글자가 그대로
 	// 오면 끈 것이다. 판정은 ime.go 에 있다.
 	imeOn   bool
@@ -117,22 +116,14 @@ func (s *sketch) openCommands(from tea.Model) (tea.Model, tea.Cmd) {
 // sketchKeys 는 어느 화면에서나 판이 받는 키다. 저장 · 되돌리기 · 끝내기는 창을 닫지 않고도 된다.
 var sketchKeys = []string{"ctrl+c", "ctrl+s", "ctrl+z", "ctrl+y", "ctrl+p"}
 
-// forgetQuit 는 ctrl+c 가 아닌 키를 받으면 "한 번 더 누르면 끝낸다" 를 거둔다. 모드 화면이 부른다.
-func (s *sketch) forgetQuit(msg tea.KeyPressMsg) {
-	if msg.String() != "ctrl+c" {
-		s.quitAsked = false
-	}
-}
-
 // sketchKey 는 판이 받는 키(sketchKeys)다. from 은 지금 모드 화면이다. 대개 from 을 그대로 돌려주고,
-// ctrl+p 는 from 위에 팔레트를 띄운다.
+// ctrl+p 는 from 위에 팔레트를, 저장 안 한 것이 있을 때의 ctrl+c 는 끝내기 확인 창을 띄운다.
 func (s *sketch) sketchKey(from tea.Model, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		if s.dirty && !s.quitAsked {
-			s.quitAsked = true
-			s.message = "저장 안 한 것이 있다. ctrl+c 를 한 번 더 누르면 버리고 끝낸다"
-			return from, nil
+		// 저장 안 한 것이 있으면 묻는다(quit.go).
+		if s.dirty {
+			return &viewQuit{sketch: s, under: from}, nil
 		}
 		return from, tea.Quit
 	case "ctrl+s":

@@ -218,15 +218,10 @@ func TestColorPopupPicksForegroundAndBackground(t *testing.T) {
 	}
 }
 
-func TestQuitAsksAgainWhenDirty(t *testing.T) {
+func TestQuitWithoutChangesQuitsAtOnce(t *testing.T) {
 	s := newTestSketch(10, 5)
-	s.Update(canvasClick(s, 0, 0, tea.MouseLeft))
-	quit := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
-	if _, cmd := s.Update(quit); cmd != nil {
-		t.Fatal("저장 안 했는데 한 번에 끝났다")
-	}
-	if _, cmd := s.Update(quit); cmd == nil {
-		t.Fatal("두 번째 ctrl+c 가 안 끝냈다")
+	if _, cmd := s.Update(quitKey); cmd == nil {
+		t.Error("저장할 것이 없는데 안 끝났다")
 	}
 }
 

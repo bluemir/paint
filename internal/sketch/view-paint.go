@@ -33,7 +33,6 @@ func (v *viewPaint) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		v.resize(msg)
 	case tea.KeyPressMsg:
-		v.forgetQuit(msg)
 		switch {
 		case slices.Contains(sketchKeys, msg.String()):
 			return v.sketchKey(v, msg)
