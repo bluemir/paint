@@ -105,7 +105,14 @@ func onMode(model tea.Model) bool {
 func typeName(model tea.Model) string { return fmt.Sprintf("%T", model) }
 
 // send 는 msgs 를 차례로 보내고 마지막에 선 화면을 돌려준다. 창이 뜨고 닫히는 대로 받는 화면이 바뀐다.
+// testSketch 를 받으면 그것을 거쳐 보내 지금 화면(screen)도 따라 바뀐다.
 func send(model tea.Model, msgs ...tea.Msg) tea.Model {
+	if s, ok := model.(*testSketch); ok {
+		for _, msg := range msgs {
+			s.Update(msg)
+		}
+		return s.screen
+	}
 	for _, msg := range msgs {
 		model, _ = model.Update(msg)
 	}
@@ -171,24 +178,25 @@ func TestClickOnStripDoesNotPaint(t *testing.T) {
 func TestTextModeTypesAndBacksUp(t *testing.T) {
 	s := newTestSketch(10, 5)
 	s.Update(typed("t"))
+	text := s.screen.(*viewText)
 	s.Update(canvasClick(s, 2, 1, tea.MouseLeft))
 	s.Update(typed("a"))
 	s.Update(typed("한"))
-	if s.cursorX != 5 {
-		t.Errorf("커서 = %d, 5 여야 한다", s.cursorX)
+	if text.cursorX != 5 {
+		t.Errorf("커서 = %d, 5 여야 한다", text.cursorX)
 	}
 	if s.canvas.At(2, 1).Glyph != "a" || s.canvas.At(3, 1).Glyph != "한" {
 		t.Errorf("적힌 것 = %q %q", s.canvas.At(2, 1).Glyph, s.canvas.At(3, 1).Glyph)
 	}
 
 	s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if s.cursorX != 3 || s.canvas.At(3, 1) != blank || s.canvas.At(4, 1) != blank {
-		t.Errorf("Backspace 뒤 커서 %d, 칸 %+v %+v", s.cursorX, s.canvas.At(3, 1), s.canvas.At(4, 1))
+	if text.cursorX != 3 || s.canvas.At(3, 1) != blank || s.canvas.At(4, 1) != blank {
+		t.Errorf("Backspace 뒤 커서 %d, 칸 %+v %+v", text.cursorX, s.canvas.At(3, 1), s.canvas.At(4, 1))
 	}
 
 	s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if s.cursorX != 2 || s.cursorY != 2 {
-		t.Errorf("Enter 뒤 커서 (%d,%d), (2,2) 여야 한다", s.cursorX, s.cursorY)
+	if text.cursorX != 2 || text.cursorY != 2 {
+		t.Errorf("Enter 뒤 커서 (%d,%d), (2,2) 여야 한다", text.cursorX, text.cursorY)
 	}
 }
 
@@ -349,14 +357,15 @@ func TestTextModePlacesTerminalCursor(t *testing.T) {
 func TestTextBackspaceLeavesFollowingText(t *testing.T) {
 	s := newTestSketch(10, 3)
 	s.setMode(modeText)
+	text := s.screen.(*viewText)
 	s.Update(canvasClick(s, 0, 0, tea.MouseLeft))
 	for _, r := range "abc" {
 		s.Update(typed(string(r)))
 	}
 	s.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace}) // b 를 지운다
-	if got := ansi.Strip(s.canvas.renderArea(0, 0, 4, 1)); got != "a c " || s.cursorX != 1 {
-		t.Errorf("%q, 커서 %d", got, s.cursorX)
+	if got := ansi.Strip(s.canvas.renderArea(0, 0, 4, 1)); got != "a c " || text.cursorX != 1 {
+		t.Errorf("%q, 커서 %d", got, text.cursorX)
 	}
 }
 
@@ -508,5 +517,30 @@ func TestStripShowsBrushCodePoint(t *testing.T) {
 		if !strings.HasSuffix(got, want) {
 			t.Errorf("%q: %q, %q 로 끝나야 한다", glyph, got, want)
 		}
+	}
+}
+
+// 글자 모드는 마우스가 짚은 칸에서 시작한다. 키로 들어와 바로 치면 마우스 밑에 적힌다. 판 밖이면 맨 앞이다.
+func TestTextModeStartsAtHoveredCell(t *testing.T) {
+	s := newTestSketch(10, 5)
+	s.Update(canvasDrag(s, 4, 2, 0))
+	s.Update(typed("t"))
+	if text := s.screen.(*viewText); text.cursorX != 4 || text.cursorY != 2 || text.lineStart != 4 {
+		t.Errorf("커서 (%d,%d) 줄 머리 %d, (4,2) 4 여야 한다", text.cursorX, text.cursorY, text.lineStart)
+	}
+	send(s, escape, tea.MouseMotionMsg{X: 0, Y: 0}, typed("t"))
+	if text := s.screen.(*viewText); text.cursorX != 0 || text.cursorY != 0 {
+		t.Errorf("판 밖에서 들어온 커서 (%d,%d), (0,0) 이어야 한다", text.cursorX, text.cursorY)
+	}
+}
+
+// 글자 모드에서 Tab 은 하는 일이 없다. 모양을 안 쓴다.
+func TestTextModeIgnoresTab(t *testing.T) {
+	s := newTestSketch(10, 5)
+	s.setMode(modeText)
+	figure := s.figure
+	s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if s.figure != figure || s.mode() != modeText {
+		t.Errorf("모양 %s, 모드 %s", s.figure, s.mode())
 	}
 }

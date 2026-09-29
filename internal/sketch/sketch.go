@@ -52,9 +52,6 @@ type sketch struct {
 	history  history
 	brush    Cell
 
-	// 글자 모드의 커서와, Enter 가 돌아갈 열이다. 글자 모드를 나갔다 들어와도 이어지도록 여기 둔다.
-	cursorX, cursorY, lineStart int
-
 	hoverX, hoverY int // 마우스가 짚은 판 위의 칸. 판 밖이면 -1.
 
 	dirty     bool
@@ -205,43 +202,6 @@ func (s *sketch) toolKey(from tea.Model, msg tea.KeyPressMsg) (tea.Model, tea.Cm
 	return from, nil
 }
 
-// textKey 는 글자 모드의 키다. 방향키는 커서를 옮기고, 글자 키는 커서 칸에 적는다.
-func (s *sketch) textKey(msg tea.KeyPressMsg) {
-	switch msg.String() {
-	case "up":
-		s.moveCursor(s.cursorX, s.cursorY-1)
-	case "down":
-		s.moveCursor(s.cursorX, s.cursorY+1)
-	case "left":
-		s.moveCursor(s.cursorX-1, s.cursorY)
-	case "right":
-		s.moveCursor(s.cursorX+1, s.cursorY)
-	case "enter":
-		s.moveCursor(s.lineStart, s.cursorY+1)
-	case "backspace":
-		if s.cursorX == 0 {
-			return
-		}
-		x := s.cursorX - 1
-		// 왼쪽이 넓은 글자의 오른쪽 반쪽이면 글자 전체 앞으로 물러선다.
-		if s.canvas.At(x, s.cursorY).continuation() && x > 0 {
-			x--
-		}
-		s.canvas.Erase(x, s.cursorY)
-		s.dirty = true
-		s.moveCursor(x, s.cursorY)
-	default:
-		for _, r := range typedGlyph(msg) {
-			width := s.canvas.Put(s.cursorX, s.cursorY, Cell{Glyph: string(r), Fg: s.brush.Fg, Bg: s.brush.Bg})
-			if width == 0 {
-				return
-			}
-			s.dirty = true
-			s.moveCursor(s.cursorX+width, s.cursorY)
-		}
-	}
-}
-
 // typedGlyph 는 키가 친 글자다. 조합키가 붙은 키와 이름만 있는 키(방향키 등)는 글자가 없다.
 func typedGlyph(msg tea.KeyPressMsg) string {
 	if msg.Mod&(tea.ModCtrl|tea.ModAlt) != 0 {
@@ -251,24 +211,6 @@ func typedGlyph(msg tea.KeyPressMsg) string {
 		return ""
 	}
 	return msg.Text
-}
-
-// moveCursor 는 커서를 판 안으로 옮기고 그 칸이 보이게 판을 굴린다.
-func (s *sketch) moveCursor(x, y int) {
-	s.cursorX = min(max(x, 0), s.canvas.Width-1)
-	s.cursorY = min(max(y, 0), s.canvas.Height-1)
-	switch {
-	case s.cursorX < s.left:
-		s.left = s.cursorX
-	case s.cursorX >= s.left+s.canvasViewWidth():
-		s.left = s.cursorX - s.canvasViewWidth() + 1
-	}
-	switch {
-	case s.cursorY < s.top:
-		s.top = s.cursorY
-	case s.cursorY >= s.top+s.canvasViewHeight():
-		s.top = s.cursorY - s.canvasViewHeight() + 1
-	}
 }
 
 func (s *sketch) scrollBy(dx, dy int) {
