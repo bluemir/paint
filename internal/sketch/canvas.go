@@ -4,16 +4,14 @@
 // 오른쪽 칸(x+1)은 이어짐 칸(Glyph "")으로 비워 둔다. 그리는 쪽은 이어짐 칸을 건너뛴다.
 // 넓은 글자의 반쪽을 덮으면 남은 반쪽이 홀로 남으므로 그 짝을 공백으로 되돌린다.
 //
-// 파일은 JSON 이다. 글자는 줄마다 문자열 하나, 색은 줄마다 화면 칸 수만큼의 배열이다. 다시 열어
-// 고치고, 사람이나 Claude 가 읽어 해석하려는 것이라 ANSI 가 아니라 JSON 이다. 글자를 줄 문자열로 두어
-// 파일을 열면 그림이 그대로 보인다. (ADR-0001, ADR-0003)
+// 파일은 JSON 이다. 글자는 줄마다 문자열 하나, 색은 줄마다 화면 칸 수만큼의 배열이다. 다시 열어 고치고,
+// 사람이나 Claude 가 읽어 해석하려는 것이라 ANSI 가 아니라 JSON 이다. 글자를 줄 문자열로 두어 파일을 열면
+// 그림이 그대로 보인다. 들여쓰기는 표준(json.MarshalIndent)에 맡긴다. (ADR-0001, ADR-0003)
 
 package sketch
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 
@@ -210,10 +208,10 @@ func colorIn(color *Color) Color {
 	return *color
 }
 
-// Save 는 판을 파일로 쓴다. 한 줄에 판의 한 줄씩 적는다. json.MarshalIndent 로 쓰면 색 배열의 칸마다
-// 줄이 바뀌어 그림을 줄로 읽을 수 없다. 조각(문자열, 색 배열)만 json 으로 적고 줄바꿈은 여기서 둔다.
+// Save 는 판을 파일로 쓴다. 들여쓰기는 표준(json.MarshalIndent)에 맡긴다. 색 배열은 칸마다 줄이 바뀌어
+// 길어지지만, 그림은 glyphs 에서 줄마다 한 줄로 보인다.
 func (canvas *Canvas) Save(path string) error {
-	glyphs, fg, bg := []string{}, []string{}, []string{}
+	layer := layerFile{Glyphs: []string{}, Fg: [][]*Color{}, Bg: [][]*Color{}}
 	for _, row := range canvas.cells {
 		var line strings.Builder
 		fgRow, bgRow := []*Color{}, []*Color{}
@@ -223,39 +221,15 @@ func (canvas *Canvas) Save(path string) error {
 			}
 			fgRow, bgRow = append(fgRow, colorOut(cell.Fg)), append(bgRow, colorOut(cell.Bg))
 		}
-		glyphText, err := jsonText(line.String())
-		if err != nil {
-			return err
-		}
-		fgText, err := jsonText(fgRow)
-		if err != nil {
-			return err
-		}
-		bgText, err := jsonText(bgRow)
-		if err != nil {
-			return err
-		}
-		glyphs, fg, bg = append(glyphs, glyphText), append(fg, fgText), append(bg, bgText)
+		layer.Glyphs = append(layer.Glyphs, line.String())
+		layer.Fg, layer.Bg = append(layer.Fg, fgRow), append(layer.Bg, bgRow)
 	}
-	block := func(lines []string) string {
-		return "[\n\t\t\t\t" + strings.Join(lines, ",\n\t\t\t\t") + "\n\t\t\t]"
+	out := canvasFile{Size: sizeFile{Width: canvas.Width, Height: canvas.Height}, Layers: []layerFile{layer}}
+	buf, err := json.MarshalIndent(out, "", "\t")
+	if err != nil {
+		return errors.WithStack(err)
 	}
-	out := fmt.Sprintf("{\n\t\"size\": {\"width\": %d, \"height\": %d},\n\t\"layers\": [\n\t\t{\n"+
-		"\t\t\t\"glyphs\": %s,\n\t\t\t\"fg\": %s,\n\t\t\t\"bg\": %s\n\t\t}\n\t]\n}\n",
-		canvas.Width, canvas.Height, block(glyphs), block(fg), block(bg))
-	return errors.WithStack(os.WriteFile(path, []byte(out), 0o644))
-}
-
-// jsonText 는 value 를 한 줄 JSON 으로 적는다. < > & 를 \u003c 따위로 바꾸지 않는다. 그림의 글자라
-// 그대로 보여야 한다.
-func jsonText(value any) (string, error) {
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return "", errors.WithStack(err)
-	}
-	return strings.TrimSuffix(buf.String(), "\n"), nil
+	return errors.WithStack(os.WriteFile(path, append(buf, '\n'), 0o644))
 }
 
 func Load(path string) (*Canvas, error) {

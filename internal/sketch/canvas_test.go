@@ -1,8 +1,10 @@
 package sketch
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -92,9 +94,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
-// 파일은 줄마다 한 줄이다. 넓은 글자는 문자열에서 두 칸을 먹고 색은 두 번 적힌다. 색 없음은 null
-// 이고, < > & 는 그대로 적힌다.
-func TestSaveWritesRowsPerLine(t *testing.T) {
+// 글자는 판의 줄마다 문자열 하나로 적힌다. 넓은 글자는 문자열에서 두 칸을 먹고 색은 두 번 적힌다. 색
+// 없음은 null 이다. < > & 는 표준 json 대로 \u003c 꼴로 적힌다.
+func TestSaveWritesGlyphRows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mock.json")
 	canvas := NewCanvas(4, 2)
 	canvas.Put(0, 0, Cell{Glyph: "집", Fg: 252, Bg: NoColor})
@@ -108,28 +110,21 @@ func TestSaveWritesRowsPerLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{
-	"size": {"width": 4, "height": 2},
-	"layers": [
-		{
-			"glyphs": [
-				"집 ┌",
-				"<&  "
-			],
-			"fg": [
-				[252,252,null,250],
-				[null,null,null,null]
-			],
-			"bg": [
-				[null,null,null,null],
-				[17,null,null,null]
-			]
+	var file canvasFile
+	if err := json.Unmarshal(buf, &file); err != nil {
+		t.Fatal(err)
+	}
+	layer := file.Layers[0]
+	if want := []string{"집 ┌", "<&  "}; !slices.Equal(layer.Glyphs, want) {
+		t.Errorf("글자 줄 = %q, %q 여야 한다", layer.Glyphs, want)
+	}
+	if fg := layer.Fg[0]; len(fg) != 4 || *fg[0] != 252 || *fg[1] != 252 || fg[2] != nil || *fg[3] != 250 {
+		t.Errorf("첫 줄 전경 = %v", fg)
+	}
+	for _, want := range []string{`"집 ┌"`, `"\u003c\u0026  "`, "null"} {
+		if !strings.Contains(string(buf), want) {
+			t.Errorf("파일에 %s 가 없다:\n%s", want, buf)
 		}
-	]
-}
-`
-	if string(buf) != want {
-		t.Errorf("파일 =\n%s\n이어야 한다\n%s", buf, want)
 	}
 }
 
